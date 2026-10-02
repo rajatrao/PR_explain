@@ -48,9 +48,10 @@ h1 { font-size: 40px; line-height: 1.05; margin: 8px 0 12px; font-weight: 500; }
   text-transform: uppercase;
 }
 
-.chip.succeeded, .epistemic.FACT { color: #1d6b45; border-color: #1d6b45; }
+.chip.succeeded, .chip.posted, .epistemic.FACT { color: #1d6b45; border-color: #1d6b45; }
 .chip.failed, .banner { color: #8c2f2a; }
-.chip.queued, .chip.running, .epistemic.INFERENCE { color: #8d5a12; border-color: #8d5a12; }
+.chip.queued, .chip.running, .chip.started, .epistemic.INFERENCE { color: #8d5a12; border-color: #8d5a12; }
+.chip.skipped { color: #6b6258; }
 .epistemic.UNKNOWN { color: #3c4c63; border-color: #3c4c63; }
 
 .banner {
@@ -72,7 +73,19 @@ h1 { font-size: 40px; line-height: 1.05; margin: 8px 0 12px; font-weight: 500; }
 .tab.active { background: #1e1a16; color: #f3efe6; }
 
 .layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 0.9fr); gap: 28px; }
-.narrative, .claims, .side, .delta { margin-top: 22px; }
+.narrative, .claims, .side, .delta, .stages { margin-top: 22px; }
+.stages ol { list-style: none; padding: 0; margin: 8px 0 0; }
+.stages li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid #eee6da;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+}
+.stage-name { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
 .card, .claim, .side section {
   background: #faf7f1;
   border: 1px solid #e4dccf;

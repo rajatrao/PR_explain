@@ -75,6 +75,7 @@ export function RunPage({ id }: { id: string }) {
         <span className={`chip ${run.comment_status}`}>Comment {run.comment_status}</span>
         <span className="chip">{run.language_coverage}</span>
       </div>
+      <StageList events={run.events} />
 
       {developerFailed && (
         <div className="banner" role="status">
@@ -163,6 +164,27 @@ export function RunPage({ id }: { id: string }) {
         </aside>
       </div>
     </article>
+  );
+}
+
+function StageList({ events }: { events: RunDetail["events"] }) {
+  return (
+    <section className="stages">
+      <h2>Stages</h2>
+      {events.length === 0 ? (
+        <p className="kicker">No stages recorded yet.</p>
+      ) : (
+        <ol>
+          {events.map((event, index) => (
+            <li key={`${event.created_at}-${event.stage}-${index}`}>
+              <span className={`chip ${event.status}`}>{event.status}</span>
+              <span className="stage-name">{event.stage.replaceAll("_", " ")}</span>
+              <span>{event.message}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 

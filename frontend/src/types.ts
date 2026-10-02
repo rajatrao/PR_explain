@@ -62,6 +62,15 @@ export type RunSummary = {
   title: string | null;
 };
 
+export type RunEvent = {
+  stage: string;
+  status: string;
+  message: string;
+  detail: Record<string, string | number | boolean> | null;
+  created_at: string | null;
+  head_sha: string | null;
+};
+
 export type Delta = {
   previous_head_sha: string | null;
   added: { text: string; epistemic: Epistemic; kind: string }[];
@@ -104,5 +113,6 @@ export type RunDetail = {
     }
   >;
   delta: Delta | null;
+  events: RunEvent[];
   depths: string[];
 };

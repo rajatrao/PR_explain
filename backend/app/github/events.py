@@ -6,11 +6,13 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     AnalysisRun,
     GithubInstallation,
+    PipelineEvent,
     PullRequest,
     Repository,
     Revision,
     WebhookDelivery,
 )
+from app.jobs.events import record_event
 from app.jobs.queue import enqueue_job
 
 _ANALYZE_ACTIONS = {"opened", "reopened", "synchronize"}
@@ -22,10 +24,29 @@ def handle_github_event(session: Session, event: str, payload: dict, delivery_id
             select(WebhookDelivery).where(WebhookDelivery.delivery_id == delivery_id)
         ).first()
         if existing is not None:
+            run_id, head_sha = _delivery_run(session, delivery_id)
+            record_event(
+                session,
+                stage="webhook_rejected",
+                status="skipped",
+                message="Ignored duplicate webhook delivery",
+                run_id=run_id,
+                delivery_id=delivery_id,
+                head_sha=head_sha,
+                detail={"reason": "duplicate"},
+            )
             return {"status": "duplicate"}
         session.add(WebhookDelivery(delivery_id=delivery_id, event=event or "unknown"))
 
     action = payload.get("action")
+    if event == "pull_request" and action in _ANALYZE_ACTIONS:
+        return _enqueue_pull_request(session, payload, delivery_id)
+
+    _record_received(session, delivery_id, event, None, None)
+    return _dispatch(session, event, payload, action)
+
+
+def _dispatch(session: Session, event: str, payload: dict, action: str | None) -> dict:
     if event == "installation" and action == "deleted":
         installation_id = (payload.get("installation") or {}).get("id")
         installation = session.get(GithubInstallation, installation_id) if installation_id else None
@@ -49,11 +70,6 @@ def handle_github_event(session: Session, event: str, payload: dict, delivery_id
             if row is not None:
                 session.delete(row)
         return {"status": "ok"}
-
-    if event == "pull_request":
-        if action not in _ANALYZE_ACTIONS:
-            return {"status": "ignored"}
-        return _enqueue_pull_request(session, payload)
 
     return {"status": "ignored"}
 
@@ -94,17 +110,44 @@ def _upsert_repository(session: Session, installation_id: int | None, repo: dict
     return row
 
 
-def _enqueue_pull_request(session: Session, payload: dict) -> dict:
+def _record_received(session: Session, delivery_id: str, event: str, run_id, head_sha) -> None:
+    label = (event or "github").strip()[:64] or "github"
+    record_event(
+        session,
+        stage="webhook_received",
+        status="succeeded",
+        message=f"Received {label} webhook",
+        run_id=run_id,
+        delivery_id=delivery_id or None,
+        head_sha=head_sha,
+        detail={"github_event": label},
+    )
+
+
+def _delivery_run(session: Session, delivery_id: str):
+    prior = session.scalars(
+        select(PipelineEvent)
+        .where(PipelineEvent.delivery_id == delivery_id, PipelineEvent.run_id.is_not(None))
+        .order_by(PipelineEvent.ordinal.desc())
+    ).first()
+    if prior is None:
+        return None, None
+    return prior.run_id, prior.head_sha
+
+
+def _enqueue_pull_request(session: Session, payload: dict, delivery_id: str) -> dict:
     installation = payload.get("installation") or {}
     repository = payload.get("repository") or {}
     pull = payload.get("pull_request") or {}
     repo_row = _upsert_repository(session, installation.get("id"), repository)
     if repo_row is None:
+        _record_received(session, delivery_id, "pull_request", None, None)
         return {"status": "ignored"}
     number = pull.get("number")
     head_sha = (pull.get("head") or {}).get("sha")
     base_sha = (pull.get("base") or {}).get("sha")
     if not number or not head_sha or not base_sha:
+        _record_received(session, delivery_id, "pull_request", None, None)
         return {"status": "ignored"}
     session.flush()
     pr = session.scalars(
@@ -118,6 +161,7 @@ def _enqueue_pull_request(session: Session, payload: dict) -> dict:
         select(Revision).where(Revision.pull_request_id == pr.id, Revision.head_sha == head_sha)
     ).first()
     if revision is not None and revision.run is not None:
+        _record_received(session, delivery_id, "pull_request", revision.run.id, head_sha)
         return {"status": "exists", "run_id": str(revision.run.id)}
     if revision is None:
         revision = Revision(
@@ -137,5 +181,6 @@ def _enqueue_pull_request(session: Session, payload: dict) -> dict:
     )
     session.add(run)
     session.flush()
+    _record_received(session, delivery_id, "pull_request", run.id, head_sha)
     enqueue_job(session, run.id, "analyze", None)
     return {"status": "queued", "run_id": str(run.id)}

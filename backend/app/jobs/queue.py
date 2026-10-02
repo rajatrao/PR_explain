@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AnalysisJob
+from app.db.models import AnalysisJob, AnalysisRun
+from app.jobs.events import record_event
 
 
 def enqueue_job(
@@ -23,7 +24,26 @@ def enqueue_job(
         available_at=datetime.now(timezone.utc),
     )
     session.add(job)
+    detail = {"phase": phase}
+    if depth:
+        detail["depth"] = depth
+    record_event(
+        session,
+        stage="job_queued",
+        status="succeeded",
+        message=f"Queued {phase} job",
+        run_id=run_id,
+        head_sha=_head_sha(session, run_id),
+        detail=detail,
+    )
     return job
+
+
+def _head_sha(session: Session, run_id: uuid.UUID) -> str | None:
+    run = session.get(AnalysisRun, run_id)
+    if run is None or run.revision is None:
+        return None
+    return run.revision.head_sha
 
 
 def lock_statement():
