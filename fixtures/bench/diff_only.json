@@ -1,0 +1,75 @@
+{
+  "id": "diff-only",
+  "constraints": {
+    "required_substrings": [
+      "No TypeScript or JavaScript"
+    ],
+    "forbid_call_graph": true
+  },
+  "packet": {
+    "revision": {
+      "repository": "fixture/docs",
+      "pr_number": 3,
+      "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "title": "Docs only",
+      "body": null
+    },
+    "depth": "developer",
+    "claims": [
+      {
+        "id": "cl_diff_only",
+        "epistemic": "UNKNOWN",
+        "kind": "diff_only",
+        "text": "No TypeScript or JavaScript sources were analyzed for this revision; facts are limited to the diff.",
+        "subject": null,
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_file_changed_README_md",
+        "epistemic": "FACT",
+        "kind": "file_changed",
+        "text": "README.md is changed in this pull request.",
+        "subject": "README.md",
+        "evidence_ids": [
+          "ev_file_changed_README_md"
+        ]
+      }
+    ],
+    "symbols": [],
+    "relationships": [],
+    "impact": [
+      {
+        "id": "impact_change",
+        "area": "change",
+        "summary": "1 selected claims touch change.",
+        "claim_ids": [
+          "cl_file_changed_README_md"
+        ]
+      }
+    ],
+    "tests": [],
+    "evidence": [
+      {
+        "id": "ev_file_changed_README_md",
+        "type": "diff_hunk",
+        "repo": "fixture/docs",
+        "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "file": "README.md",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": null,
+        "description": "README.md is part of the compare diff.",
+        "snippet": null
+      }
+    ],
+    "unknowns": [
+      {
+        "id": "unk_cl_diff_only",
+        "text": "No TypeScript or JavaScript sources were analyzed for this revision; facts are limited to the diff.",
+        "claim_id": "cl_diff_only"
+      }
+    ],
+    "context_notes": []
+  }
+}

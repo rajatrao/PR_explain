@@ -1,0 +1,1 @@
+Use the stored one-hop call graph. Mention shared symbols, the direct callers already in the packet, paths with no test, and the unknowns. Do not add a second hop and do not name callers that a context note says were omitted.

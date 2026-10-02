@@ -1,0 +1,277 @@
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.analyzer.analyze import analyze
+from app.analyzer.types import Snapshot
+from app.config import Settings
+from app.db.models import AnalysisRun, ExplanationRow, PullRequest
+from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
+from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
+from app.explanation.select import build_packet
+from app.explanation.validate import validate_response
+from app.github.comment import render_pull_request_comment
+from app.jobs.queue import enqueue_job
+from app.jobs.store import load_result, persist_result, record_delta, save_packet
+from app.llm.provider import ExplainRequest, ExplanationCallError, LLMConfigError, LLMProvider
+
+
+def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, settings: Settings) -> None:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise LookupError(f"run {run_id} was not found")
+    revision = run.revision
+    snapshot.repository = revision.pull_request.repository.full_name
+    snapshot.base_sha = revision.base_sha
+    snapshot.head_sha = revision.head_sha
+    snapshot.pr_number = revision.pull_request.number
+    snapshot.pr_title = revision.title
+    snapshot.pr_body = revision.body
+    run.analysis_status = "running"
+    session.commit()
+    try:
+        result = analyze(
+            snapshot,
+            fanout_cap=settings.fanout_cap,
+            max_changed_symbols=settings.max_changed_symbols,
+        )
+        persist_result(session, run, result)
+        packet = build_packet(
+            result,
+            snapshot,
+            "developer",
+            settings.explanation_packet_char_budget,
+        )
+        save_packet(session, run, packet)
+        record_delta(session, revision, result.claims)
+        run.analysis_status = "succeeded"
+        run.analysis_error = None
+        run.explanation_status = "queued"
+        run.comment_status = "pending"
+        enqueue_job(session, run.id, "explain", "developer")
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        failed = session.get(AnalysisRun, run_id)
+        if failed is not None:
+            failed.analysis_status = "failed"
+            failed.analysis_error = str(exc)[:2000]
+            session.commit()
+        raise
+
+
+def execute_explain(
+    session: Session,
+    run_id: uuid.UUID,
+    depth: str,
+    provider: LLMProvider,
+    settings: Settings,
+    comment_client=None,
+) -> None:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise LookupError(f"run {run_id} was not found")
+    if run.analysis_status != "succeeded":
+        raise RuntimeError("explanation requires a succeeded analysis")
+    if depth == "developer":
+        run.explanation_status = "running"
+        run.explanation_error = None
+        session.commit()
+    packet = _packet_for_depth(session, run, depth, settings)
+    try:
+        validation, result = _generate(provider, packet, depth)
+    except (ExplanationCallError, LLMConfigError, OSError, ConnectionError) as exc:
+        _mark_explanation_failed(session, run, depth, provider, str(exc), None)
+        if depth == "developer":
+            _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
+        return
+    except Exception as exc:
+        _mark_explanation_failed(session, run, depth, provider, str(exc), None)
+        if depth == "developer":
+            _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
+        return
+    if not validation.ok or validation.document is None:
+        message = "; ".join(validation.errors) or "explanation failed validation"
+        _mark_explanation_failed(session, run, depth, provider, message, validation.raw_text, result.model)
+        if depth == "developer":
+            _sync_comment(session, run, settings, comment_client, document=None, failure=message)
+        return
+    _store_explanation(
+        session,
+        run,
+        depth,
+        status="succeeded",
+        provider_id=provider.id,
+        model=result.model,
+        document=validation.document.model_dump(mode="json"),
+        raw_response=result.content,
+        error=None,
+    )
+    if depth == "developer":
+        run.explanation_status = "succeeded"
+        run.explanation_error = None
+    session.commit()
+    if depth == "developer":
+        _sync_comment(
+            session,
+            run,
+            settings,
+            comment_client,
+            document=validation.document,
+            failure=None,
+        )
+
+
+def execute_comment(session: Session, run_id: uuid.UUID, settings: Settings, comment_client) -> None:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise LookupError(f"run {run_id} was not found")
+    row = _explanation_row(session, run.id, "developer")
+    if row is None or row.status != "succeeded" or not row.document:
+        failure = run.explanation_error or "Explanation failed for this commit."
+        _sync_comment(session, run, settings, comment_client, document=None, failure=failure)
+        return
+    document = ExplanationDocument.model_validate(row.document)
+    _sync_comment(session, run, settings, comment_client, document=document, failure=None)
+
+
+def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: Settings) -> ExplanationPacket:
+    from app.db.models import ExplanationPacketRow
+
+    row = session.scalars(
+        select(ExplanationPacketRow).where(
+            ExplanationPacketRow.run_id == run.id,
+            ExplanationPacketRow.depth == depth,
+        )
+    ).first()
+    if row is not None:
+        return ExplanationPacket.model_validate(row.payload)
+    result = load_result(session, run)
+    revision = run.revision
+    snapshot = Snapshot(
+        repository=revision.pull_request.repository.full_name,
+        base_sha=revision.base_sha,
+        head_sha=revision.head_sha,
+        files={},
+        changes=[],
+        pr_number=revision.pull_request.number,
+        pr_title=revision.title,
+        pr_body=revision.body,
+    )
+    packet = build_packet(result, snapshot, depth, settings.explanation_packet_char_budget)  # type: ignore[arg-type]
+    save_packet(session, run, packet)
+    session.commit()
+    return packet
+
+
+def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
+    request = _request(packet, depth, None)
+    result = provider.explain(request)
+    validation = validate_response(result.content, packet)
+    if validation.ok:
+        return validation, result
+    repair = _request(packet, depth, validation.errors)
+    repaired = provider.explain(repair)
+    return validate_response(repaired.content, packet), repaired
+
+
+def _request(packet: ExplanationPacket, depth: str, errors: list[str] | None) -> ExplainRequest:
+    scoped = packet.model_copy(update={"depth": depth})
+    return ExplainRequest(
+        packet=scoped,
+        depth=depth,  # type: ignore[arg-type]
+        system_prompt=system_prompt(),
+        user_prompt=build_user_message(scoped, repair_errors=errors),
+        json_schema=ExplanationDocument.model_json_schema(),
+        repair_errors=errors,
+    )
+
+
+def _mark_explanation_failed(session, run, depth, provider, message, raw, model=None) -> None:
+    _store_explanation(
+        session,
+        run,
+        depth,
+        status="failed",
+        provider_id=getattr(provider, "id", None),
+        model=model,
+        document=None,
+        raw_response=raw,
+        error=message[:2000],
+    )
+    if depth == "developer":
+        run.explanation_status = "failed"
+        run.explanation_error = message[:2000]
+    session.commit()
+
+
+def _store_explanation(session, run, depth, *, status, provider_id, model, document, raw_response, error) -> None:
+    row = _explanation_row(session, run.id, depth)
+    if row is None:
+        row = ExplanationRow(run_id=run.id, depth=depth, status=status)
+        session.add(row)
+    row.status = status
+    row.provider = provider_id
+    row.model = model
+    row.prompt_version = PROMPT_VERSION
+    row.document = document
+    row.raw_response = raw_response
+    row.error = error
+
+
+def _explanation_row(session, run_id, depth) -> ExplanationRow | None:
+    return session.scalars(
+        select(ExplanationRow).where(ExplanationRow.run_id == run_id, ExplanationRow.depth == depth)
+    ).first()
+
+
+def _sync_comment(session, run, settings: Settings, comment_client, *, document, failure) -> None:
+    if comment_client is None:
+        return
+    revision = run.revision
+    pull = revision.pull_request
+    packet_row = next((item for item in run.packets if item.depth == "developer"), None)
+    evidence_by_id: dict[str, EvidenceRef] = {}
+    if packet_row is not None:
+        packet = ExplanationPacket.model_validate(packet_row.payload)
+        evidence_by_id = {item.id: item for item in packet.evidence}
+    body = render_pull_request_comment(
+        document=document,
+        failure=failure,
+        repo_full_name=pull.repository.full_name,
+        pr_number=pull.number,
+        head_sha=revision.head_sha,
+        app_base_url=settings.app_base_url,
+        run_id=str(run.id),
+        evidence_by_id=evidence_by_id,
+    )
+    try:
+        _publish(comment_client, pull, body)
+        run.comment_status = "posted"
+        run.comment_error = None
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        fresh = session.get(AnalysisRun, run.id)
+        if fresh is None:
+            return
+        fresh.comment_status = "failed"
+        fresh.comment_error = str(exc)[:2000]
+        session.commit()
+
+
+def _publish(comment_client, pull: PullRequest, body: str) -> None:
+    full_name = pull.repository.full_name
+    from app.github.client import GitHubNotFound
+
+    if pull.explanation_comment_id:
+        try:
+            comment_client.update_comment(full_name, pull.explanation_comment_id, body)
+            return
+        except GitHubNotFound:
+            pull.explanation_comment_id = None
+    comment_id = comment_client.create_comment(full_name, pull.number, body)
+    pull.explanation_comment_id = comment_id

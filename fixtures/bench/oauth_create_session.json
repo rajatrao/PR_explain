@@ -1,0 +1,841 @@
+{
+  "id": "oauth-create-session",
+  "constraints": {
+    "required_names": [
+      "login",
+      "googleCallback",
+      "refreshToken"
+    ],
+    "forbidden_names": [
+      "inventedFourthCaller"
+    ],
+    "required_substrings": [
+      "refreshToken"
+    ]
+  },
+  "packet": {
+    "revision": {
+      "repository": "fixture/oauth-ts",
+      "pr_number": 7,
+      "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "title": "Add ttl to shared session creation",
+      "body": "All login methods should share createSession. This description is author narrative and is not a fact."
+    },
+    "depth": "developer",
+    "claims": [
+      {
+        "id": "cl_changed_sym_src_session_ts_createSession_1",
+        "epistemic": "FACT",
+        "kind": "symbol_changed",
+        "text": "createSession changed in src/session.ts.",
+        "subject": "createSession",
+        "evidence_ids": [
+          "ev_changed_sym_src_session_ts_createSession_1"
+        ]
+      },
+      {
+        "id": "cl_file_changed_src_session_ts",
+        "epistemic": "FACT",
+        "kind": "file_changed",
+        "text": "src/session.ts is changed in this pull request.",
+        "subject": "src/session.ts",
+        "evidence_ids": [
+          "ev_file_changed_src_session_ts"
+        ]
+      },
+      {
+        "id": "cl_calls_googleCallback_createSession",
+        "epistemic": "FACT",
+        "kind": "calls",
+        "text": "googleCallback calls createSession.",
+        "subject": "createSession",
+        "evidence_ids": [
+          "ev_call_src_oauth_ts_googleCallback_createSession_4"
+        ]
+      },
+      {
+        "id": "cl_calls_login_createSession",
+        "epistemic": "FACT",
+        "kind": "calls",
+        "text": "login calls createSession.",
+        "subject": "createSession",
+        "evidence_ids": [
+          "ev_call_src_login_ts_login_createSession_4"
+        ]
+      },
+      {
+        "id": "cl_calls_refreshToken_createSession",
+        "epistemic": "FACT",
+        "kind": "calls",
+        "text": "refreshToken calls createSession.",
+        "subject": "createSession",
+        "evidence_ids": [
+          "ev_call_src_refresh_ts_refreshToken_createSession_4"
+        ]
+      },
+      {
+        "id": "cl_missing_test_sym_src_refresh_ts_refreshToken_3",
+        "epistemic": "UNKNOWN",
+        "kind": "missing_test",
+        "text": "No test references refreshToken.",
+        "subject": "refreshToken",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_missing_test_sym_src_session_ts_createSession_1",
+        "epistemic": "UNKNOWN",
+        "kind": "missing_test",
+        "text": "No test references createSession.",
+        "subject": "createSession",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_tests_src_login_test_ts_login",
+        "epistemic": "FACT",
+        "kind": "tests",
+        "text": "src/login.test.ts tests login.",
+        "subject": "login",
+        "evidence_ids": [
+          "ev_test_src_login_test_ts_login_1"
+        ]
+      },
+      {
+        "id": "cl_tests_src_oauth_test_ts_googleCallback",
+        "epistemic": "FACT",
+        "kind": "tests",
+        "text": "src/oauth.test.ts tests googleCallback.",
+        "subject": "googleCallback",
+        "evidence_ids": [
+          "ev_test_src_oauth_test_ts_googleCallback_1"
+        ]
+      },
+      {
+        "id": "cl_api_sym_src_session_ts_createSession_1",
+        "epistemic": "FACT",
+        "kind": "defines_api",
+        "text": "createSession is an exported API in src/session.ts.",
+        "subject": "createSession",
+        "evidence_ids": [
+          "ev_changed_sym_src_session_ts_createSession_1"
+        ]
+      },
+      {
+        "id": "cl_absent_src_health_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/health.ts is absent from the diff.",
+        "subject": "src/health.ts",
+        "evidence_ids": [
+          "ev_absent_src_health_ts"
+        ]
+      },
+      {
+        "id": "cl_absent_src_login_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/login.ts is absent from the diff.",
+        "subject": "src/login.ts",
+        "evidence_ids": [
+          "ev_absent_src_login_ts"
+        ]
+      },
+      {
+        "id": "cl_absent_src_oauth_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/oauth.ts is absent from the diff.",
+        "subject": "src/oauth.ts",
+        "evidence_ids": [
+          "ev_absent_src_oauth_ts"
+        ]
+      },
+      {
+        "id": "cl_absent_src_password_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/password.ts is absent from the diff.",
+        "subject": "src/password.ts",
+        "evidence_ids": [
+          "ev_absent_src_password_ts"
+        ]
+      },
+      {
+        "id": "cl_absent_src_refresh_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/refresh.ts is absent from the diff.",
+        "subject": "src/refresh.ts",
+        "evidence_ids": [
+          "ev_absent_src_refresh_ts"
+        ]
+      },
+      {
+        "id": "cl_reaches_src_login_ts",
+        "epistemic": "FACT",
+        "kind": "reaches_changed",
+        "text": "src/login.ts is absent from the diff, but a call or import path reaches changed symbol createSession, so its behavior is not unchanged.",
+        "subject": "src/login.ts",
+        "evidence_ids": [
+          "ev_absent_src_login_ts"
+        ]
+      },
+      {
+        "id": "cl_reaches_src_oauth_ts",
+        "epistemic": "FACT",
+        "kind": "reaches_changed",
+        "text": "src/oauth.ts is absent from the diff, but a call or import path reaches changed symbol createSession, so its behavior is not unchanged.",
+        "subject": "src/oauth.ts",
+        "evidence_ids": [
+          "ev_absent_src_oauth_ts"
+        ]
+      },
+      {
+        "id": "cl_reaches_src_password_ts",
+        "epistemic": "FACT",
+        "kind": "reaches_changed",
+        "text": "src/password.ts is absent from the diff, but a call or import path reaches changed symbol createSession, so its behavior is not unchanged.",
+        "subject": "src/password.ts",
+        "evidence_ids": [
+          "ev_absent_src_password_ts"
+        ]
+      },
+      {
+        "id": "cl_reaches_src_refresh_ts",
+        "epistemic": "FACT",
+        "kind": "reaches_changed",
+        "text": "src/refresh.ts is absent from the diff, but a call or import path reaches changed symbol createSession, so its behavior is not unchanged.",
+        "subject": "src/refresh.ts",
+        "evidence_ids": [
+          "ev_absent_src_refresh_ts"
+        ]
+      },
+      {
+        "id": "cl_unchanged_src_health_ts",
+        "epistemic": "INFERENCE",
+        "kind": "behavior_unchanged",
+        "text": "src/health.ts behavior is unchanged because no call or import path reaches a changed symbol.",
+        "subject": "src/health.ts",
+        "evidence_ids": [
+          "ev_absent_src_health_ts"
+        ]
+      },
+      {
+        "id": "cl_reason_src_login_ts_login",
+        "epistemic": "FACT",
+        "kind": "file_reason",
+        "text": "src/login.ts is not in the diff and matters because login calls createSession.",
+        "subject": "src/login.ts",
+        "evidence_ids": [
+          "ev_call_src_login_ts_login_createSession_4"
+        ]
+      },
+      {
+        "id": "cl_reason_src_oauth_ts_googleCallback",
+        "epistemic": "FACT",
+        "kind": "file_reason",
+        "text": "src/oauth.ts is not in the diff and matters because googleCallback calls createSession.",
+        "subject": "src/oauth.ts",
+        "evidence_ids": [
+          "ev_call_src_oauth_ts_googleCallback_createSession_4"
+        ]
+      },
+      {
+        "id": "cl_reason_src_refresh_ts_refreshToken",
+        "epistemic": "FACT",
+        "kind": "file_reason",
+        "text": "src/refresh.ts is not in the diff and matters because refreshToken calls createSession.",
+        "subject": "src/refresh.ts",
+        "evidence_ids": [
+          "ev_call_src_refresh_ts_refreshToken_createSession_4"
+        ]
+      }
+    ],
+    "symbols": [
+      {
+        "id": "sym_file_src_health_ts",
+        "name": "health.ts",
+        "kind": "file",
+        "file_path": "src/health.ts",
+        "start_line": 1,
+        "end_line": 3,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_health_ts_health_1",
+        "name": "health",
+        "kind": "function",
+        "file_path": "src/health.ts",
+        "start_line": 1,
+        "end_line": 3,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_login_test_ts",
+        "name": "login.test.ts",
+        "kind": "file",
+        "file_path": "src/login.test.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_login_ts",
+        "name": "login.ts",
+        "kind": "file",
+        "file_path": "src/login.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_login_ts_login_3",
+        "name": "login",
+        "kind": "function",
+        "file_path": "src/login.ts",
+        "start_line": 3,
+        "end_line": 5,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_oauth_test_ts",
+        "name": "oauth.test.ts",
+        "kind": "file",
+        "file_path": "src/oauth.test.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_oauth_ts",
+        "name": "oauth.ts",
+        "kind": "file",
+        "file_path": "src/oauth.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_oauth_ts_googleCallback_3",
+        "name": "googleCallback",
+        "kind": "function",
+        "file_path": "src/oauth.ts",
+        "start_line": 3,
+        "end_line": 5,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_password_ts",
+        "name": "password.ts",
+        "kind": "file",
+        "file_path": "src/password.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_password_ts_passwordLogin_3",
+        "name": "passwordLogin",
+        "kind": "function",
+        "file_path": "src/password.ts",
+        "start_line": 3,
+        "end_line": 5,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_refresh_ts",
+        "name": "refresh.ts",
+        "kind": "file",
+        "file_path": "src/refresh.ts",
+        "start_line": 1,
+        "end_line": 5,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_refresh_ts_refreshToken_3",
+        "name": "refreshToken",
+        "kind": "function",
+        "file_path": "src/refresh.ts",
+        "start_line": 3,
+        "end_line": 5,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_session_ts",
+        "name": "session.ts",
+        "kind": "file",
+        "file_path": "src/session.ts",
+        "start_line": 1,
+        "end_line": 4,
+        "exported": false,
+        "changed": true
+      },
+      {
+        "id": "sym_src_session_ts_createSession_1",
+        "name": "createSession",
+        "kind": "function",
+        "file_path": "src/session.ts",
+        "start_line": 1,
+        "end_line": 4,
+        "exported": true,
+        "changed": true
+      }
+    ],
+    "relationships": [
+      {
+        "id": "rel_imports_src_login_test_ts_sym_src_login_ts_login_3",
+        "type": "IMPORTS",
+        "source": "src/login.test.ts",
+        "target": "login",
+        "source_file": "src/login.test.ts",
+        "target_file": "src/login.ts",
+        "evidence_id": "ev_import_src_login_test_ts_login_1"
+      },
+      {
+        "id": "rel_imports_src_login_ts_sym_src_session_ts_createSession_1",
+        "type": "IMPORTS",
+        "source": "src/login.ts",
+        "target": "createSession",
+        "source_file": "src/login.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_import_src_login_ts_createSession_1"
+      },
+      {
+        "id": "rel_imports_src_oauth_test_ts_sym_src_oauth_ts_googleCallback_3",
+        "type": "IMPORTS",
+        "source": "src/oauth.test.ts",
+        "target": "googleCallback",
+        "source_file": "src/oauth.test.ts",
+        "target_file": "src/oauth.ts",
+        "evidence_id": "ev_import_src_oauth_test_ts_googleCallback_1"
+      },
+      {
+        "id": "rel_imports_src_oauth_ts_sym_src_session_ts_createSession_1",
+        "type": "IMPORTS",
+        "source": "src/oauth.ts",
+        "target": "createSession",
+        "source_file": "src/oauth.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_import_src_oauth_ts_createSession_1"
+      },
+      {
+        "id": "rel_imports_src_password_ts_sym_src_session_ts_createSession_1",
+        "type": "IMPORTS",
+        "source": "src/password.ts",
+        "target": "createSession",
+        "source_file": "src/password.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_import_src_password_ts_createSession_1"
+      },
+      {
+        "id": "rel_imports_src_refresh_ts_sym_src_session_ts_createSession_1",
+        "type": "IMPORTS",
+        "source": "src/refresh.ts",
+        "target": "createSession",
+        "source_file": "src/refresh.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_import_src_refresh_ts_createSession_1"
+      },
+      {
+        "id": "rel_calls_src_login_test_ts_sym_src_login_ts_login_3_4",
+        "type": "CALLS",
+        "source": "src/login.test.ts",
+        "target": "login",
+        "source_file": "src/login.test.ts",
+        "target_file": "src/login.ts",
+        "evidence_id": "ev_call_src_login_test_ts_src_login_test_ts_login_4"
+      },
+      {
+        "id": "rel_calls_login_sym_src_session_ts_createSession_1_4",
+        "type": "CALLS",
+        "source": "login",
+        "target": "createSession",
+        "source_file": "src/login.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_call_src_login_ts_login_createSession_4"
+      },
+      {
+        "id": "rel_calls_googleCallback_sym_src_session_ts_createSession_1_4",
+        "type": "CALLS",
+        "source": "googleCallback",
+        "target": "createSession",
+        "source_file": "src/oauth.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_call_src_oauth_ts_googleCallback_createSession_4"
+      },
+      {
+        "id": "rel_calls_refreshToken_sym_src_session_ts_createSession_1_4",
+        "type": "CALLS",
+        "source": "refreshToken",
+        "target": "createSession",
+        "source_file": "src/refresh.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_call_src_refresh_ts_refreshToken_createSession_4"
+      },
+      {
+        "id": "rel_calls_src_oauth_test_ts_sym_src_oauth_ts_googleCallback_3_4",
+        "type": "CALLS",
+        "source": "src/oauth.test.ts",
+        "target": "googleCallback",
+        "source_file": "src/oauth.test.ts",
+        "target_file": "src/oauth.ts",
+        "evidence_id": "ev_call_src_oauth_test_ts_src_oauth_test_ts_googleCallback_4"
+      },
+      {
+        "id": "rel_changed_sym_src_session_ts_createSession_1",
+        "type": "CHANGED_IN_PR",
+        "source": "createSession",
+        "target": "src/session.ts",
+        "source_file": "src/session.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_changed_sym_src_session_ts_createSession_1"
+      },
+      {
+        "id": "rel_api_sym_src_session_ts_createSession_1",
+        "type": "DEFINES_API",
+        "source": "src/session.ts",
+        "target": "createSession",
+        "source_file": "src/session.ts",
+        "target_file": "src/session.ts",
+        "evidence_id": "ev_changed_sym_src_session_ts_createSession_1"
+      },
+      {
+        "id": "rel_tests_src_login_test_ts_sym_src_login_ts_login_3",
+        "type": "TESTS",
+        "source": "src/login.test.ts",
+        "target": "login",
+        "source_file": "src/login.test.ts",
+        "target_file": "src/login.ts",
+        "evidence_id": "ev_test_src_login_test_ts_login_1"
+      },
+      {
+        "id": "rel_tests_src_oauth_test_ts_sym_src_oauth_ts_googleCallback_3",
+        "type": "TESTS",
+        "source": "src/oauth.test.ts",
+        "target": "googleCallback",
+        "source_file": "src/oauth.test.ts",
+        "target_file": "src/oauth.ts",
+        "evidence_id": "ev_test_src_oauth_test_ts_googleCallback_1"
+      }
+    ],
+    "impact": [
+      {
+        "id": "impact_change",
+        "area": "change",
+        "summary": "5 selected claims touch change.",
+        "claim_ids": [
+          "cl_changed_sym_src_session_ts_createSession_1",
+          "cl_calls_googleCallback_createSession",
+          "cl_calls_login_createSession",
+          "cl_calls_refreshToken_createSession",
+          "cl_api_sym_src_session_ts_createSession_1"
+        ]
+      },
+      {
+        "id": "impact_src",
+        "area": "src",
+        "summary": "1 selected claims touch src.",
+        "claim_ids": [
+          "cl_file_changed_src_session_ts"
+        ]
+      }
+    ],
+    "tests": [
+      {
+        "id": "rel_tests_src_login_test_ts_sym_src_login_ts_login_3",
+        "file_path": "src/login.test.ts",
+        "symbol": "login",
+        "present": true,
+        "claim_id": "cl_tests_src_login_test_ts_login"
+      },
+      {
+        "id": "rel_tests_src_oauth_test_ts_sym_src_oauth_ts_googleCallback_3",
+        "file_path": "src/oauth.test.ts",
+        "symbol": "googleCallback",
+        "present": true,
+        "claim_id": "cl_tests_src_oauth_test_ts_googleCallback"
+      },
+      {
+        "id": "test_missing_cl_missing_test_sym_src_refresh_ts_refreshToken_3",
+        "file_path": "",
+        "symbol": "refreshToken",
+        "present": false,
+        "claim_id": "cl_missing_test_sym_src_refresh_ts_refreshToken_3"
+      },
+      {
+        "id": "test_missing_cl_missing_test_sym_src_session_ts_createSession_1",
+        "file_path": "",
+        "symbol": "createSession",
+        "present": false,
+        "claim_id": "cl_missing_test_sym_src_session_ts_createSession_1"
+      }
+    ],
+    "evidence": [
+      {
+        "id": "ev_absent_src_health_ts",
+        "type": "absent_file",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/health.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/health.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_absent_src_login_ts",
+        "type": "absent_file",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/login.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_absent_src_oauth_ts",
+        "type": "absent_file",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/oauth.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_absent_src_password_ts",
+        "type": "absent_file",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/password.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/password.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_absent_src_refresh_ts",
+        "type": "absent_file",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/refresh.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/refresh.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_call_src_login_test_ts_src_login_test_ts_login_4",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.test.ts",
+        "start_line": 4,
+        "end_line": 4,
+        "symbol": "login",
+        "description": "src/login.test.ts calls login in src/login.test.ts.",
+        "snippet": null
+      },
+      {
+        "id": "ev_call_src_login_ts_login_createSession_4",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.ts",
+        "start_line": 4,
+        "end_line": 4,
+        "symbol": "createSession",
+        "description": "login calls createSession in src/login.ts.",
+        "snippet": "  return createSession(userId, 3600);"
+      },
+      {
+        "id": "ev_call_src_oauth_test_ts_src_oauth_test_ts_googleCallback_4",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.test.ts",
+        "start_line": 4,
+        "end_line": 4,
+        "symbol": "googleCallback",
+        "description": "src/oauth.test.ts calls googleCallback in src/oauth.test.ts.",
+        "snippet": null
+      },
+      {
+        "id": "ev_call_src_oauth_ts_googleCallback_createSession_4",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.ts",
+        "start_line": 4,
+        "end_line": 4,
+        "symbol": "createSession",
+        "description": "googleCallback calls createSession in src/oauth.ts.",
+        "snippet": "  return createSession(userId, 3600);"
+      },
+      {
+        "id": "ev_call_src_refresh_ts_refreshToken_createSession_4",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/refresh.ts",
+        "start_line": 4,
+        "end_line": 4,
+        "symbol": "createSession",
+        "description": "refreshToken calls createSession in src/refresh.ts.",
+        "snippet": "  return createSession(userId, 7200);"
+      },
+      {
+        "id": "ev_changed_sym_src_session_ts_createSession_1",
+        "type": "diff_hunk",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/session.ts",
+        "start_line": 1,
+        "end_line": 4,
+        "symbol": "createSession",
+        "description": "createSession overlaps the diff in src/session.ts.",
+        "snippet": null
+      },
+      {
+        "id": "ev_file_changed_src_session_ts",
+        "type": "diff_hunk",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/session.ts",
+        "start_line": 1,
+        "end_line": 3,
+        "symbol": null,
+        "description": "src/session.ts is part of the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_login_test_ts_login_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.test.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "login",
+        "description": "src/login.test.ts imports login from ./login.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_login_ts_createSession_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "createSession",
+        "description": "src/login.ts imports createSession from ./session.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_oauth_test_ts_googleCallback_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.test.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "googleCallback",
+        "description": "src/oauth.test.ts imports googleCallback from ./oauth.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_oauth_ts_createSession_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "createSession",
+        "description": "src/oauth.ts imports createSession from ./session.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_password_ts_createSession_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/password.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "createSession",
+        "description": "src/password.ts imports createSession from ./session.",
+        "snippet": null
+      },
+      {
+        "id": "ev_import_src_refresh_ts_createSession_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/refresh.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "createSession",
+        "description": "src/refresh.ts imports createSession from ./session.",
+        "snippet": null
+      },
+      {
+        "id": "ev_test_src_login_test_ts_login_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/login.test.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "login",
+        "description": "src/login.test.ts references login.",
+        "snippet": "import { login } from \"./login\";"
+      },
+      {
+        "id": "ev_test_src_oauth_test_ts_googleCallback_1",
+        "type": "source_span",
+        "repo": "fixture/oauth-ts",
+        "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "file": "src/oauth.test.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "googleCallback",
+        "description": "src/oauth.test.ts references googleCallback.",
+        "snippet": "import { googleCallback } from \"./oauth\";"
+      }
+    ],
+    "unknowns": [
+      {
+        "id": "unk_cl_missing_test_sym_src_refresh_ts_refreshToken_3",
+        "text": "No test references refreshToken.",
+        "claim_id": "cl_missing_test_sym_src_refresh_ts_refreshToken_3"
+      },
+      {
+        "id": "unk_cl_missing_test_sym_src_session_ts_createSession_1",
+        "text": "No test references createSession.",
+        "claim_id": "cl_missing_test_sym_src_session_ts_createSession_1"
+      }
+    ],
+    "context_notes": []
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "id": "dependency-only",
+  "constraints": {
+    "forbid_call_graph": true,
+    "forbidden_names": [
+      "createSession"
+    ],
+    "required_substrings": [
+      "package.json"
+    ]
+  },
+  "packet": {
+    "revision": {
+      "repository": "fixture/deps",
+      "pr_number": 2,
+      "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "title": "Bump a dependency",
+      "body": "Manifest only."
+    },
+    "depth": "developer",
+    "claims": [
+      {
+        "id": "cl_diff_only",
+        "epistemic": "UNKNOWN",
+        "kind": "diff_only",
+        "text": "No TypeScript or JavaScript sources were analyzed for this revision; facts are limited to the diff.",
+        "subject": null,
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_file_changed_package_json",
+        "epistemic": "FACT",
+        "kind": "file_changed",
+        "text": "package.json is changed in this pull request.",
+        "subject": "package.json",
+        "evidence_ids": [
+          "ev_file_changed_package_json"
+        ]
+      },
+      {
+        "id": "cl_depends_package_json",
+        "epistemic": "FACT",
+        "kind": "dependency_changed",
+        "text": "package.json changes left-pad. No call graph was inferred from the manifest.",
+        "subject": "package.json",
+        "evidence_ids": [
+          "ev_package_json"
+        ]
+      }
+    ],
+    "symbols": [
+      {
+        "id": "sym_dep_left_pad",
+        "name": "left-pad",
+        "kind": "dependency",
+        "file_path": "package.json",
+        "start_line": 1,
+        "end_line": 1,
+        "exported": false,
+        "changed": true
+      }
+    ],
+    "relationships": [
+      {
+        "id": "rel_depends_left_pad",
+        "type": "DEPENDS_ON",
+        "source": "package.json",
+        "target": "left-pad",
+        "source_file": "package.json",
+        "target_file": "package.json",
+        "evidence_id": "ev_package_json"
+      }
+    ],
+    "impact": [
+      {
+        "id": "impact_change",
+        "area": "change",
+        "summary": "2 selected claims touch change.",
+        "claim_ids": [
+          "cl_file_changed_package_json",
+          "cl_depends_package_json"
+        ]
+      }
+    ],
+    "tests": [],
+    "evidence": [
+      {
+        "id": "ev_file_changed_package_json",
+        "type": "diff_hunk",
+        "repo": "fixture/deps",
+        "commit_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "file": "package.json",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": null,
+        "description": "package.json is part of the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_package_json",
+        "type": "diff_hunk",
+        "repo": "fixture/deps",
+        "commit_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "file": "package.json",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "package.json is in the compare diff.",
+        "snippet": null
+      }
+    ],
+    "unknowns": [
+      {
+        "id": "unk_cl_diff_only",
+        "text": "No TypeScript or JavaScript sources were analyzed for this revision; facts are limited to the diff.",
+        "claim_id": "cl_diff_only"
+      }
+    ],
+    "context_notes": []
+  }
+}

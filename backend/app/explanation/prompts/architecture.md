@@ -1,0 +1,1 @@
+Explain boundaries, exported APIs, database facts, dependency facts, and external systems named by evidence. If the packet has no database or API facts, write an UNKNOWN statement instead of guessing a boundary.

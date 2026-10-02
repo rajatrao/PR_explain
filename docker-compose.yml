@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pr_explain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pr_explain}
+      POSTGRES_DB: ${POSTGRES_DB:-pr_explain}
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pr_explain}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [app]
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks: [models]
+
+  ollama-pull:
+    image: curlimages/curl:8.12.1
+    networks: [models]
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3-coder:30b}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until curl -sf http://ollama:11434/api/tags >/dev/null; do sleep 2; done
+        curl -sfN http://ollama:11434/api/pull -d "{\"name\":\"$${OLLAMA_MODEL}\"}"
+
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pr_explain}:${POSTGRES_PASSWORD:-pr_explain}@postgres:5432/${POSTGRES_DB:-pr_explain}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      EXPLANATION_PACKET_CHAR_BUDGET: ${EXPLANATION_PACKET_CHAR_BUDGET:-32000}
+      FANOUT_CAP: ${FANOUT_CAP:-50}
+      MAX_CHANGED_SYMBOLS: ${MAX_CHANGED_SYMBOLS:-80}
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [app]
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      API_PROXY: http://api:8000
+    depends_on:
+      - api
+    networks: [app]
+
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pr_explain}:${POSTGRES_PASSWORD:-pr_explain}@postgres:5432/${POSTGRES_DB:-pr_explain}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3-coder:30b}
+      OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-180000}
+      EXPLANATION_PACKET_CHAR_BUDGET: ${EXPLANATION_PACKET_CHAR_BUDGET:-32000}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
+      FANOUT_CAP: ${FANOUT_CAP:-50}
+      MAX_CHANGED_SYMBOLS: ${MAX_CHANGED_SYMBOLS:-80}
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    networks: [app, models]
+
+networks:
+  app:
+  models:
+
+volumes:
+  ollama_data:

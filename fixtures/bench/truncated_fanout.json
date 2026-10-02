@@ -1,0 +1,384 @@
+{
+  "id": "truncated-fanout",
+  "constraints": {
+    "required_substrings": [
+      "omitted"
+    ],
+    "forbidden_names": [
+      "caller2"
+    ],
+    "required_names": [
+      "caller0",
+      "caller1"
+    ]
+  },
+  "packet": {
+    "revision": {
+      "repository": "fixture/fanout",
+      "pr_number": 4,
+      "head_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "title": "Fan out",
+      "body": null
+    },
+    "depth": "developer",
+    "claims": [
+      {
+        "id": "cl_changed_sym_src_core_ts_core_1",
+        "epistemic": "FACT",
+        "kind": "symbol_changed",
+        "text": "core changed in src/core.ts.",
+        "subject": "core",
+        "evidence_ids": [
+          "ev_changed_sym_src_core_ts_core_1"
+        ]
+      },
+      {
+        "id": "cl_file_changed_src_core_ts",
+        "epistemic": "FACT",
+        "kind": "file_changed",
+        "text": "src/core.ts is changed in this pull request.",
+        "subject": "src/core.ts",
+        "evidence_ids": [
+          "ev_file_changed_src_core_ts"
+        ]
+      },
+      {
+        "id": "cl_calls_caller0_core",
+        "epistemic": "FACT",
+        "kind": "calls",
+        "text": "caller0 calls core.",
+        "subject": "core",
+        "evidence_ids": [
+          "ev_call_src_callers_ts_caller0_core_1"
+        ]
+      },
+      {
+        "id": "cl_calls_caller1_core",
+        "epistemic": "FACT",
+        "kind": "calls",
+        "text": "caller1 calls core.",
+        "subject": "core",
+        "evidence_ids": [
+          "ev_call_src_callers_ts_caller1_core_2"
+        ]
+      },
+      {
+        "id": "cl_fanout_sym_src_core_ts_core_1",
+        "epistemic": "UNKNOWN",
+        "kind": "fanout_truncated",
+        "text": "1 further callers of core omitted.",
+        "subject": "core",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_missing_test_sym_src_callers_ts_caller0_1",
+        "epistemic": "UNKNOWN",
+        "kind": "missing_test",
+        "text": "No test references caller0.",
+        "subject": "caller0",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_missing_test_sym_src_callers_ts_caller1_2",
+        "epistemic": "UNKNOWN",
+        "kind": "missing_test",
+        "text": "No test references caller1.",
+        "subject": "caller1",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_missing_test_sym_src_core_ts_core_1",
+        "epistemic": "UNKNOWN",
+        "kind": "missing_test",
+        "text": "No test references core.",
+        "subject": "core",
+        "evidence_ids": []
+      },
+      {
+        "id": "cl_api_sym_src_core_ts_core_1",
+        "epistemic": "FACT",
+        "kind": "defines_api",
+        "text": "core is an exported API in src/core.ts.",
+        "subject": "core",
+        "evidence_ids": [
+          "ev_changed_sym_src_core_ts_core_1"
+        ]
+      },
+      {
+        "id": "cl_absent_src_callers_ts",
+        "epistemic": "FACT",
+        "kind": "file_absent",
+        "text": "src/callers.ts is absent from the diff.",
+        "subject": "src/callers.ts",
+        "evidence_ids": [
+          "ev_absent_src_callers_ts"
+        ]
+      },
+      {
+        "id": "cl_reaches_src_callers_ts",
+        "epistemic": "FACT",
+        "kind": "reaches_changed",
+        "text": "src/callers.ts is absent from the diff, but a call or import path reaches changed symbol core, so its behavior is not unchanged.",
+        "subject": "src/callers.ts",
+        "evidence_ids": [
+          "ev_absent_src_callers_ts"
+        ]
+      },
+      {
+        "id": "cl_reason_src_callers_ts_caller0",
+        "epistemic": "FACT",
+        "kind": "file_reason",
+        "text": "src/callers.ts is not in the diff and matters because caller0 calls core.",
+        "subject": "src/callers.ts",
+        "evidence_ids": [
+          "ev_call_src_callers_ts_caller0_core_1"
+        ]
+      },
+      {
+        "id": "cl_reason_src_callers_ts_caller1",
+        "epistemic": "FACT",
+        "kind": "file_reason",
+        "text": "src/callers.ts is not in the diff and matters because caller1 calls core.",
+        "subject": "src/callers.ts",
+        "evidence_ids": [
+          "ev_call_src_callers_ts_caller1_core_2"
+        ]
+      }
+    ],
+    "symbols": [
+      {
+        "id": "sym_file_src_callers_ts",
+        "name": "callers.ts",
+        "kind": "file",
+        "file_path": "src/callers.ts",
+        "start_line": 1,
+        "end_line": 3,
+        "exported": false,
+        "changed": false
+      },
+      {
+        "id": "sym_src_callers_ts_caller0_1",
+        "name": "caller0",
+        "kind": "function",
+        "file_path": "src/callers.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_src_callers_ts_caller1_2",
+        "name": "caller1",
+        "kind": "function",
+        "file_path": "src/callers.ts",
+        "start_line": 2,
+        "end_line": 2,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_src_callers_ts_caller2_3",
+        "name": "caller2",
+        "kind": "function",
+        "file_path": "src/callers.ts",
+        "start_line": 3,
+        "end_line": 3,
+        "exported": true,
+        "changed": false
+      },
+      {
+        "id": "sym_file_src_core_ts",
+        "name": "core.ts",
+        "kind": "file",
+        "file_path": "src/core.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "exported": false,
+        "changed": true
+      },
+      {
+        "id": "sym_src_core_ts_core_1",
+        "name": "core",
+        "kind": "function",
+        "file_path": "src/core.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "exported": true,
+        "changed": true
+      }
+    ],
+    "relationships": [
+      {
+        "id": "rel_calls_caller0_sym_src_core_ts_core_1_1",
+        "type": "CALLS",
+        "source": "caller0",
+        "target": "core",
+        "source_file": "src/callers.ts",
+        "target_file": "src/core.ts",
+        "evidence_id": "ev_call_src_callers_ts_caller0_core_1"
+      },
+      {
+        "id": "rel_calls_caller1_sym_src_core_ts_core_1_2",
+        "type": "CALLS",
+        "source": "caller1",
+        "target": "core",
+        "source_file": "src/callers.ts",
+        "target_file": "src/core.ts",
+        "evidence_id": "ev_call_src_callers_ts_caller1_core_2"
+      },
+      {
+        "id": "rel_changed_sym_src_core_ts_core_1",
+        "type": "CHANGED_IN_PR",
+        "source": "core",
+        "target": "src/core.ts",
+        "source_file": "src/core.ts",
+        "target_file": "src/core.ts",
+        "evidence_id": "ev_changed_sym_src_core_ts_core_1"
+      },
+      {
+        "id": "rel_api_sym_src_core_ts_core_1",
+        "type": "DEFINES_API",
+        "source": "src/core.ts",
+        "target": "core",
+        "source_file": "src/core.ts",
+        "target_file": "src/core.ts",
+        "evidence_id": "ev_changed_sym_src_core_ts_core_1"
+      }
+    ],
+    "impact": [
+      {
+        "id": "impact_change",
+        "area": "change",
+        "summary": "4 selected claims touch change.",
+        "claim_ids": [
+          "cl_changed_sym_src_core_ts_core_1",
+          "cl_calls_caller0_core",
+          "cl_calls_caller1_core",
+          "cl_api_sym_src_core_ts_core_1"
+        ]
+      },
+      {
+        "id": "impact_src",
+        "area": "src",
+        "summary": "1 selected claims touch src.",
+        "claim_ids": [
+          "cl_file_changed_src_core_ts"
+        ]
+      }
+    ],
+    "tests": [
+      {
+        "id": "test_missing_cl_missing_test_sym_src_callers_ts_caller0_1",
+        "file_path": "",
+        "symbol": "caller0",
+        "present": false,
+        "claim_id": "cl_missing_test_sym_src_callers_ts_caller0_1"
+      },
+      {
+        "id": "test_missing_cl_missing_test_sym_src_callers_ts_caller1_2",
+        "file_path": "",
+        "symbol": "caller1",
+        "present": false,
+        "claim_id": "cl_missing_test_sym_src_callers_ts_caller1_2"
+      },
+      {
+        "id": "test_missing_cl_missing_test_sym_src_core_ts_core_1",
+        "file_path": "",
+        "symbol": "core",
+        "present": false,
+        "claim_id": "cl_missing_test_sym_src_core_ts_core_1"
+      }
+    ],
+    "evidence": [
+      {
+        "id": "ev_absent_src_callers_ts",
+        "type": "absent_file",
+        "repo": "fixture/fanout",
+        "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "file": "src/callers.ts",
+        "start_line": null,
+        "end_line": null,
+        "symbol": null,
+        "description": "src/callers.ts does not appear in the compare diff.",
+        "snippet": null
+      },
+      {
+        "id": "ev_call_src_callers_ts_caller0_core_1",
+        "type": "source_span",
+        "repo": "fixture/fanout",
+        "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "file": "src/callers.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "core",
+        "description": "caller0 calls core in src/callers.ts.",
+        "snippet": "export function caller0(): string { return core(); }"
+      },
+      {
+        "id": "ev_call_src_callers_ts_caller1_core_2",
+        "type": "source_span",
+        "repo": "fixture/fanout",
+        "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "file": "src/callers.ts",
+        "start_line": 2,
+        "end_line": 2,
+        "symbol": "core",
+        "description": "caller1 calls core in src/callers.ts.",
+        "snippet": "export function caller1(): string { return core(); }"
+      },
+      {
+        "id": "ev_changed_sym_src_core_ts_core_1",
+        "type": "diff_hunk",
+        "repo": "fixture/fanout",
+        "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "file": "src/core.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": "core",
+        "description": "core overlaps the diff in src/core.ts.",
+        "snippet": "export function core(): string { return 'core'; }"
+      },
+      {
+        "id": "ev_file_changed_src_core_ts",
+        "type": "diff_hunk",
+        "repo": "fixture/fanout",
+        "commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "file": "src/core.ts",
+        "start_line": 1,
+        "end_line": 1,
+        "symbol": null,
+        "description": "src/core.ts is part of the compare diff.",
+        "snippet": null
+      }
+    ],
+    "unknowns": [
+      {
+        "id": "unk_cl_fanout_sym_src_core_ts_core_1",
+        "text": "1 further callers of core omitted.",
+        "claim_id": "cl_fanout_sym_src_core_ts_core_1"
+      },
+      {
+        "id": "unk_cl_missing_test_sym_src_callers_ts_caller0_1",
+        "text": "No test references caller0.",
+        "claim_id": "cl_missing_test_sym_src_callers_ts_caller0_1"
+      },
+      {
+        "id": "unk_cl_missing_test_sym_src_callers_ts_caller1_2",
+        "text": "No test references caller1.",
+        "claim_id": "cl_missing_test_sym_src_callers_ts_caller1_2"
+      },
+      {
+        "id": "unk_cl_missing_test_sym_src_core_ts_core_1",
+        "text": "No test references core.",
+        "claim_id": "cl_missing_test_sym_src_core_ts_core_1"
+      }
+    ],
+    "context_notes": [
+      {
+        "code": "analyzer",
+        "text": "1 further callers of core omitted."
+      }
+    ]
+  }
+}
