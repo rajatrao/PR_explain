@@ -14,6 +14,7 @@ from app.explanation.schema import EvidenceRef, ExplanationDocument, Explanation
 from app.explanation.select import build_packet
 from app.explanation.validate import validate_response
 from app.github.comment import render_pull_request_comment
+from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.queue import enqueue_job
 from app.jobs.store import load_result, persist_result, record_delta, save_packet
 from app.llm.provider import ExplainRequest, ExplanationCallError, LLMConfigError, LLMProvider
@@ -30,6 +31,7 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
     snapshot.pr_number = revision.pull_request.number
     snapshot.pr_title = revision.title
     snapshot.pr_body = revision.body
+    head_sha = revision.head_sha
     run.analysis_status = "running"
     session.commit()
     try:
@@ -37,8 +39,26 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
             snapshot,
             fanout_cap=settings.fanout_cap,
             max_changed_symbols=settings.max_changed_symbols,
+            on_stage=lambda stage, status, message, detail=None: record_event(
+                session,
+                stage=stage,
+                status=status,
+                message=message,
+                run_id=run.id,
+                head_sha=head_sha,
+                detail=detail,
+            ),
         )
         persist_result(session, run, result)
+        record_event(
+            session,
+            stage="claims_persisted",
+            status="succeeded",
+            message="Persisted claims",
+            run_id=run.id,
+            head_sha=head_sha,
+            detail={"claim_count": len(result.claims)},
+        )
         packet = build_packet(
             result,
             snapshot,
@@ -46,6 +66,15 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
             settings.explanation_packet_char_budget,
         )
         save_packet(session, run, packet)
+        record_event(
+            session,
+            stage="explanation_packet_persisted",
+            status="succeeded",
+            message="Persisted the explanation packet",
+            run_id=run.id,
+            head_sha=head_sha,
+            detail={"depth": packet.depth, "claim_count": len(packet.claims)},
+        )
         record_delta(session, revision, result.claims)
         run.analysis_status = "succeeded"
         run.analysis_error = None
@@ -55,6 +84,7 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
         session.commit()
     except Exception as exc:
         session.rollback()
+        restore_pipeline_events(session)
         failed = session.get(AnalysisRun, run_id)
         if failed is not None:
             failed.analysis_status = "failed"
@@ -74,28 +104,48 @@ def execute_explain(
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise LookupError(f"run {run_id} was not found")
+    head_sha = run.revision.head_sha
     if run.analysis_status != "succeeded":
+        record_event(
+            session,
+            stage="explanation",
+            status="failed",
+            message="Explanation failed",
+            run_id=run.id,
+            head_sha=head_sha,
+            detail={"depth": depth, "reason": "analysis_not_ready"},
+        )
         raise RuntimeError("explanation requires a succeeded analysis")
     if depth == "developer":
         run.explanation_status = "running"
         run.explanation_error = None
+    record_event(
+        session,
+        stage="explanation",
+        status="started",
+        message="Explanation started",
+        run_id=run.id,
+        head_sha=head_sha,
+        detail={"depth": depth},
+    )
+    if depth == "developer":
         session.commit()
     packet = _packet_for_depth(session, run, depth, settings)
     try:
         validation, result = _generate(provider, packet, depth)
     except (ExplanationCallError, LLMConfigError, OSError, ConnectionError) as exc:
-        _mark_explanation_failed(session, run, depth, provider, str(exc), None)
+        _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
         if depth == "developer":
             _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
         return
     except Exception as exc:
-        _mark_explanation_failed(session, run, depth, provider, str(exc), None)
+        _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
         if depth == "developer":
             _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
         return
     if not validation.ok or validation.document is None:
         message = "; ".join(validation.errors) or "explanation failed validation"
-        _mark_explanation_failed(session, run, depth, provider, message, validation.raw_text, result.model)
+        _fail_explanation(session, run, depth, provider, message, validation.raw_text, head_sha, "validation")
         if depth == "developer":
             _sync_comment(session, run, settings, comment_client, document=None, failure=message)
         return
@@ -113,6 +163,15 @@ def execute_explain(
     if depth == "developer":
         run.explanation_status = "succeeded"
         run.explanation_error = None
+    record_event(
+        session,
+        stage="explanation",
+        status="succeeded",
+        message="Explanation succeeded",
+        run_id=run.id,
+        head_sha=run.revision.head_sha,
+        detail={"depth": depth},
+    )
     session.commit()
     if depth == "developer":
         _sync_comment(
@@ -190,6 +249,19 @@ def _request(packet: ExplanationPacket, depth: str, errors: list[str] | None) ->
     )
 
 
+def _fail_explanation(session, run, depth, provider, message, raw, head_sha, error_type, model=None) -> None:
+    record_event(
+        session,
+        stage="explanation",
+        status="failed",
+        message="Explanation failed",
+        run_id=run.id,
+        head_sha=head_sha,
+        detail={"depth": depth, "error_type": error_type},
+    )
+    _mark_explanation_failed(session, run, depth, provider, message, raw, model)
+
+
 def _mark_explanation_failed(session, run, depth, provider, message, raw, model=None) -> None:
     _store_explanation(
         session,
@@ -229,9 +301,26 @@ def _explanation_row(session, run_id, depth) -> ExplanationRow | None:
 
 
 def _sync_comment(session, run, settings: Settings, comment_client, *, document, failure) -> None:
-    if comment_client is None:
-        return
     revision = run.revision
+    head_sha = revision.head_sha
+    if comment_client is None:
+        record_event(
+            session,
+            stage="comment",
+            status="skipped",
+            message="Skipped the pull request comment",
+            run_id=run.id,
+            head_sha=head_sha,
+        )
+        return
+    record_event(
+        session,
+        stage="comment",
+        status="started",
+        message="Comment started",
+        run_id=run.id,
+        head_sha=head_sha,
+    )
     pull = revision.pull_request
     packet_row = next((item for item in run.packets if item.depth == "developer"), None)
     evidence_by_id: dict[str, EvidenceRef] = {}
@@ -252,14 +341,32 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         _publish(comment_client, pull, body)
         run.comment_status = "posted"
         run.comment_error = None
+        record_event(
+            session,
+            stage="comment",
+            status="posted",
+            message="Posted the pull request comment",
+            run_id=run.id,
+            head_sha=head_sha,
+        )
         session.commit()
     except Exception as exc:
         session.rollback()
+        restore_pipeline_events(session)
         fresh = session.get(AnalysisRun, run.id)
         if fresh is None:
             return
         fresh.comment_status = "failed"
         fresh.comment_error = str(exc)[:2000]
+        record_event(
+            session,
+            stage="comment",
+            status="failed",
+            message="Comment failed",
+            run_id=fresh.id,
+            head_sha=head_sha,
+            detail={"error_type": type(exc).__name__},
+        )
         session.commit()
 
 

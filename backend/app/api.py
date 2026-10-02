@@ -14,10 +14,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.db.models import AnalysisRun, PullRequest, Revision, RevisionDelta
+from app.db.models import AnalysisRun, PipelineEvent, PullRequest, Revision, RevisionDelta
 from app.db.session import get_db
 from app.github.events import handle_github_event
 from app.github.webhook import verify_signature
+from app.jobs.events import record_event, save_events
 from app.jobs.queue import enqueue_job
 
 DEPTHS = ("quick", "developer", "deep", "architecture")
@@ -61,6 +62,15 @@ async def github_webhook(request: Request, session: Session = Depends(get_db)) -
     settings = get_settings()
     signature = request.headers.get("x-hub-signature-256")
     if not verify_signature(settings.github_webhook_secret, body, signature):
+        record_event(
+            session,
+            stage="webhook_rejected",
+            status="failed",
+            message="Rejected webhook with an invalid signature",
+            delivery_id=request.headers.get("x-github-delivery") or None,
+            detail={"reason": "invalid_signature"},
+        )
+        save_events(session)
         raise HTTPException(status_code=401, detail="invalid signature")
     try:
         payload = json.loads(body.decode("utf-8"))
@@ -285,8 +295,28 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             "removed": delta.removed,
             "unchanged_count": delta.unchanged_count,
         },
+        "events": _events(session, run),
         "depths": list(DEPTHS),
     }
+
+
+def _events(session: Session, run: AnalysisRun) -> list[dict]:
+    rows = session.scalars(
+        select(PipelineEvent)
+        .where(PipelineEvent.run_id == run.id)
+        .order_by(PipelineEvent.ordinal, PipelineEvent.created_at)
+    ).all()
+    return [
+        {
+            "stage": row.stage,
+            "status": row.status,
+            "message": row.message,
+            "detail": row.detail,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "head_sha": row.head_sha,
+        }
+        for row in rows
+    ]
 
 
 if _DIST.is_dir():

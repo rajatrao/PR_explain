@@ -9,6 +9,7 @@ from app.db.models import AnalysisJob, AnalysisRun
 from app.db.session import session_factory
 from app.github.auth import installation_token
 from app.github.client import GitHubClient, GithubSnapshotSource
+from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.pipeline import execute_analyze, execute_comment, execute_explain
 from app.jobs.queue import claim_next_job
 from app.llm.provider import LLMConfigError, LLMProvider, create_llm_provider
@@ -43,6 +44,7 @@ def process_available_job(
             session.commit()
     except Exception as exc:
         session.rollback()
+        restore_pipeline_events(session)
         current = session.get(AnalysisJob, job.id)
         if current is not None and current.status == "running":
             current.status = "failed"
@@ -58,8 +60,38 @@ def _run_job(session, job: AnalysisJob, settings, snapshot_source, comment_clien
     if job.phase == "analyze":
         revision = run.revision
         repository = revision.pull_request.repository
-        source = snapshot_source or _github_source(settings, repository.installation_id)
-        snapshot = source.fetch(repository.full_name, revision.base_sha, revision.head_sha)
+        head_sha = revision.head_sha
+        record_event(
+            session,
+            stage="snapshot_fetch",
+            status="started",
+            message="Fetching repository snapshot",
+            run_id=run.id,
+            head_sha=head_sha,
+        )
+        try:
+            source = snapshot_source or _github_source(settings, repository.installation_id)
+            snapshot = source.fetch(repository.full_name, revision.base_sha, revision.head_sha)
+        except Exception as exc:
+            record_event(
+                session,
+                stage="snapshot_fetch",
+                status="failed",
+                message="Snapshot fetch failed",
+                run_id=run.id,
+                head_sha=head_sha,
+                detail={"error_type": type(exc).__name__},
+            )
+            raise
+        record_event(
+            session,
+            stage="snapshot_fetch",
+            status="succeeded",
+            message="Fetched repository snapshot",
+            run_id=run.id,
+            head_sha=head_sha,
+            detail={"file_count": len(snapshot.files), "change_count": len(snapshot.changes)},
+        )
         execute_analyze(session, run.id, snapshot, settings)
         return
     if job.phase == "explain":
