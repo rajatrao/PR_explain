@@ -1,0 +1,61 @@
+# PR Explain
+
+PR Explain turns one pull-request head SHA into evidence-backed claims, then asks a local model to narrate those claims. The same validated Developer explanation is shown in the React app and posted as one pull-request comment. If narration or the comment fails, the analysis stays.
+
+The model does not analyze the repository. Deterministic analysis builds the change graph. Ollama only narrates a stored packet. The web app and the API never call Ollama.
+
+## Run it
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. Copy the environment file: `cp .env.example .env`
+3. Start the stack: `docker compose up`
+
+   The first start pulls `qwen3-coder:30b` (about 18GB) into the Ollama volume. On a Mac, Docker is a Linux VM and does not get Metal, so explanations run on CPU and can take minutes. That is expected. Changing `OLLAMA_BASE_URL` on the worker to another private Ollama is a config change, not a code change.
+
+4. For GitHub webhooks, tunnel only to FastAPI:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+   Set the GitHub App webhook URL to `https://<tunnel-host>/api/webhooks/github`. Open the explanation page at [http://localhost:5173](http://localhost:5173).
+
+5. Do not add port 11434 to the tunnel. Compose publishes Ollama on `127.0.0.1` only, on a network the API and the web app are not attached to.
+
+GitHub App permissions: Metadata read, Contents read, Pull requests read and write. Events: `installation`, `installation_repositories`, and `pull_request` (`opened`, `reopened`, `synchronize`, `closed`). `closed` does not analyze. There is no Checks permission and no review score.
+
+## What you get
+
+- Analysis status and explanation status are stored separately. A failed explanation leaves claims, files, and symbols on the page.
+- Depths are prompts over one stored packet. The first view generates Developer. Quick, Deep, and Architecture are generated lazily when you open them.
+- One conversation comment per pull request, updated in place for each new head SHA. A failed GitHub write does not discard the page.
+- Revision deltas compare claim sets across head SHAs.
+
+## Tests without Ollama or GitHub
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+Pytest covers the oauth fixture claims, the citation validator, job failure with a fake provider, and the comment renderer. Nothing in that suite downloads a model or contacts GitHub.
+
+To look at the page locally without Compose, from `backend/`:
+
+```bash
+DATABASE_URL=sqlite:///./dev.db PYTHONPATH=. python -m app.seed
+DATABASE_URL=sqlite:///./dev.db PYTHONPATH=. uvicorn app.api:app --port 8000
+```
+
+In another shell, `cd frontend && npm install && npm run dev`, then open the runs the seed command printed.
+
+## Model bench
+
+`python -m app.llm.bench` sends the frozen packets in `fixtures/bench` through the configured provider and writes a local JSON report. The report scores grounding, structure, latency, and process memory. It is a model eval. It is not a pull-request quality score and it is not shown to repository users.
+
+## Privacy
+
+The MVP path keeps the snapshot, the packet, and the narration on infrastructure you run. There is no OpenAI or Anthropic client and no silent fallback when Ollama is down. An unknown `LLM_PROVIDER` fails the explanation step and leaves the analysis intact. Anyone who later adds a hosted provider is choosing to send the packet off the machine. This repository does not do that.
