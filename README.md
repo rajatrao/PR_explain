@@ -22,17 +22,23 @@ The model does not analyze the repository. Deterministic analysis builds the cha
 
 5. Do not add port 11434 to the tunnel. Compose publishes Ollama on `127.0.0.1` only, on a network the API and the web app are not attached to.
 
-GitHub App permissions: Metadata read, Contents read, Pull requests read and write. Events: `installation`, `installation_repositories`, and `pull_request` (`opened`, `reopened`, `synchronize`, `closed`). `closed` does not analyze. There is no Checks permission and no review score.
+On the GitHub App settings page, generate a private key. The browser downloads a `.pem` file.
 
-Point `GITHUB_APP_PRIVATE_KEY_FILE` at the downloaded PEM instead of pasting the key into `GITHUB_APP_PRIVATE_KEY`. Compose mounts that host file read-only and sets the env var to the container path:
-
-```yaml
-GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app.pem
-```
+Set `GITHUB_APP_PRIVATE_KEY_FILE` in the repo-root `.env` to the host path of that file. The variable is already in `.env.example`. In `docker-compose.yml`, the `api` and `worker` services mount that same host file read-only at `/run/secrets/github-app.pem` and set `GITHUB_APP_PRIVATE_KEY_FILE` inside those containers to `/run/secrets/github-app.pem`:
 
 ```yaml
 - /path/to/app.private-key.pem:/run/secrets/github-app.pem:ro
 ```
+
+The app reads the key from the mounted file. Leave `GITHUB_APP_PRIVATE_KEY` empty.
+
+GitHub App permissions:
+
+- Metadata: Read
+- Contents: Read (required to download the repository tarball)
+- Pull requests: Write (required to post and update the pull request comment)
+
+Events: `installation`, `installation_repositories`, and `pull_request` (`opened`, `reopened`, `synchronize`, `closed`). `closed` does not analyze. There is no Checks permission and no review score.
 
 ## What you get
 
