@@ -52,6 +52,34 @@ def _stages(session, run_id) -> list[tuple[str, str]]:
     return [(row.stage, row.status) for row in rows]
 
 
+def test_configure_logging_emits_pipeline_event(db, capsys):
+    from app.logsetup import configure_logging
+
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = list(root.handlers)
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)
+    try:
+        configure_logging()
+        record_event(
+            db,
+            stage="webhook_received",
+            status="succeeded",
+            message="Received ping webhook",
+        )
+        captured = capsys.readouterr()
+    finally:
+        for handler in list(root.handlers):
+            if handler not in saved_handlers:
+                root.removeHandler(handler)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+    assert "pipeline_event stage=webhook_received" in captured.err
+    assert "status=succeeded" in captured.err
+    assert "message=Received ping webhook" in captured.err
+
+
 def test_successful_job_records_stage_order(db, caplog):
     caplog.set_level(logging.INFO, logger="app.jobs.events")
     snapshot = load_oauth_snapshot()
@@ -224,3 +252,129 @@ def test_webhook_rejection_is_persisted_without_the_payload(db):
     assert "do not store this body" not in blob
     assert "secret-token" not in blob
     assert "payload" not in blob
+
+
+def _opened_pull(number: int, repo_id: int, full_name: str, head: str, **extra) -> dict:
+    payload = {
+        "action": "opened",
+        "installation": {"id": 9, "account": {"login": "acme"}},
+        "repository": {"id": repo_id, "full_name": full_name, "default_branch": "main"},
+        "pull_request": {
+            "number": number,
+            "title": extra.pop("title", "Share sessions"),
+            "body": "do not store this body",
+            "head": {"sha": head},
+            "base": {"sha": "a" * 40},
+        },
+        "performed_via_github_app": None,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _run_events(db, run_id: str):
+    from uuid import UUID
+
+    return db.scalars(
+        select(PipelineEvent)
+        .where(PipelineEvent.run_id == UUID(run_id))
+        .order_by(PipelineEvent.ordinal, PipelineEvent.created_at)
+    ).all()
+
+
+def test_opened_pull_request_stores_webhook_trace(db):
+    client = TestClient(app)
+    opened = _opened_pull(4, 21, "acme/trace", "b" * 40)
+    body, headers = _signed(opened, "pull_request", "delivery-opened-trace")
+    queued = client.post("/api/webhooks/github", content=body, headers=headers)
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "queued"
+    run_id = queued.json()["run_id"]
+
+    db.commit()
+    rows = _run_events(db, run_id)
+    assert rows
+    first = rows[0]
+    assert first.stage == "webhook_received"
+    assert first.status == "succeeded"
+    assert first.message == "Received pull_request webhook"
+    assert first.created_at is not None
+    assert all(row.stage != "AGENT_REPORTED" for row in rows)
+    blob = json.dumps([{"message": row.message, "detail": row.detail} for row in rows])
+    assert "do not store this body" not in blob
+
+
+def test_bot_sender_stores_agent_reported_and_user_sender_does_not(db):
+    client = TestClient(app)
+    bot = _opened_pull(
+        5,
+        31,
+        "acme/bots",
+        "c" * 40,
+        sender={"login": "dependabot[bot]", "type": "Bot"},
+    )
+    user = _opened_pull(
+        6,
+        32,
+        "acme/humans",
+        "d" * 40,
+        title="Written by an AI agent",
+        sender={"login": "octocat", "type": "User"},
+    )
+    app_user = _opened_pull(
+        7,
+        33,
+        "acme/apps",
+        "e" * 40,
+        sender={"login": "octocat", "type": "User"},
+        performed_via_github_app={"id": 99, "slug": "pr-agent", "name": "PR Agent"},
+    )
+
+    bot_response = client.post(
+        "/api/webhooks/github",
+        content=_signed(bot, "pull_request", "delivery-bot")[0],
+        headers=_signed(bot, "pull_request", "delivery-bot")[1],
+    )
+    user_response = client.post(
+        "/api/webhooks/github",
+        content=_signed(user, "pull_request", "delivery-user")[0],
+        headers=_signed(user, "pull_request", "delivery-user")[1],
+    )
+    app_response = client.post(
+        "/api/webhooks/github",
+        content=_signed(app_user, "pull_request", "delivery-app")[0],
+        headers=_signed(app_user, "pull_request", "delivery-app")[1],
+    )
+    assert bot_response.status_code == 200
+    assert user_response.status_code == 200
+    assert app_response.status_code == 200
+
+    db.commit()
+    bot_rows = _run_events(db, bot_response.json()["run_id"])
+    user_rows = _run_events(db, user_response.json()["run_id"])
+    app_rows = _run_events(db, app_response.json()["run_id"])
+
+    bot_agents = [row for row in bot_rows if row.stage == "AGENT_REPORTED"]
+    assert len(bot_agents) == 1
+    assert bot_agents[0].status == "succeeded"
+    assert bot_agents[0].message == "Reported agent dependabot[bot]"
+    assert [row.stage for row in bot_rows[:3]] == ["webhook_received", "AGENT_REPORTED", "job_queued"]
+
+    assert all(row.stage != "AGENT_REPORTED" for row in user_rows)
+    assert user_rows[0].stage == "webhook_received"
+    assert "octocat" not in json.dumps([row.message for row in user_rows])
+
+    app_agents = [row for row in app_rows if row.stage == "AGENT_REPORTED"]
+    assert len(app_agents) == 1
+    assert app_agents[0].message == "Reported agent pr-agent"
+    assert "octocat" not in app_agents[0].message
+
+    blob = json.dumps(
+        [
+            {"message": row.message, "detail": row.detail}
+            for row in (*bot_rows, *user_rows, *app_rows)
+        ]
+    )
+    assert "do not store this body" not in blob
+    assert "Written by an AI agent" not in blob
+    assert "sender" not in blob

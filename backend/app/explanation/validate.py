@@ -117,7 +117,7 @@ def _screen_statement(statement, field_name, claims, evidence, packet, allowed_c
 
 
 def _invented_in_statement(statement: Statement, packet: ExplanationPacket, cache: dict) -> list[str]:
-    key = tuple(statement.claim_ids)
+    key = (tuple(statement.claim_ids), tuple(statement.evidence_ids))
     if key not in cache:
         chunks = []
         claim_ids = set(statement.claim_ids)

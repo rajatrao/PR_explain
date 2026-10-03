@@ -1,18 +1,39 @@
 from __future__ import annotations
 
-from app.explanation.schema import EvidenceRef, ExplanationDocument, Statement
+from app.explanation.details import build_details, render_details_markdown
+from app.explanation.schema import EvidenceRef, ExplanationDocument
 
 _LIMIT = 60000
-_SECTIONS = (
-    ("Change flow", "change_flow"),
-    ("Impacts", "impacts"),
-    ("Important changes", "important_changes"),
-    ("Tests", "tests"),
-    ("Unchanged", "unchanged"),
-    ("Unknowns", "unknowns"),
-    ("Review questions", "review_questions"),
+
+_DETAILS_TITLES = (
+    "Change Overview",
+    "High-level areas affected",
+    "Key Changes",
+    "Behavior Changes",
+    "Risk Areas",
+    "What changed",
+    "Change flow",
+    "Impact",
+    "Shared code",
+    "Tests",
+    "Unchanged boundary",
+    "Why a file outside the diff matters",
+    "Unknowns",
 )
-_SHORT_SECTIONS = ("impacts", "unknowns", "review_questions")
+_REVIEW_TITLES = ("Reviewer Attention", "Review questions")
+RETIRED_DETAILS_NOTE = "This content moved to the Explain comment."
+
+
+def explain_marker(repo_full_name: str, pr_number: int) -> str:
+    return f"<!-- pr-explain view=explain repo={repo_full_name} pr={pr_number} -->"
+
+
+def details_marker(repo_full_name: str, pr_number: int) -> str:
+    return f"<!-- pr-explain view=details repo={repo_full_name} pr={pr_number} -->"
+
+
+def legacy_explain_marker(repo_full_name: str, pr_number: int) -> str:
+    return f"<!-- pr-explain repo={repo_full_name} pr={pr_number} -->"
 
 
 def render_pull_request_comment(
@@ -25,88 +46,357 @@ def render_pull_request_comment(
     app_base_url: str,
     run_id: str,
     evidence_by_id: dict[str, EvidenceRef],
+    change_flow: str | None = None,
+    bullets: list[str] | None = None,
+    mermaid: str | None = None,
 ) -> str:
-    marker = f"<!-- pr-explain repo={repo_full_name} pr={pr_number} -->"
-    heading = f"## PR Explain for `{head_sha}`"
+    marker = explain_marker(repo_full_name, pr_number)
+    heading = f"## Explain for `{head_sha}`"
     footer = _footer(app_base_url, run_id)
     if failure or document is None:
-        reason = failure or "Explanation failed for this commit."
-        body = "\n\n".join(
-            [
-                marker,
-                heading,
-                f"Explanation failed for `{head_sha}`. {reason}",
-                "Deterministic claims remain on the explanation page.",
-                footer,
-            ]
-        )
-        return body
-    parts = [marker, heading, document.summary.strip(), ""]
-    for title, field_name in _SECTIONS:
-        rendered = _render_section(
-            title,
-            getattr(document, field_name),
-            evidence_by_id,
-            repo_full_name,
-            head_sha,
-        )
-        if rendered:
-            parts.append(rendered)
+        return _failure_body(marker, heading, failure, footer, "The Explain view is not available for this commit.")
+    story = _bullet_block(bullets) or document.summary.strip()
+    parts = [marker, heading, story, ""]
+    _append_mermaid(parts, mermaid)
+    _append_change_flow(parts, change_flow)
     parts.append(footer)
     body = "\n\n".join(part for part in parts if part is not None)
     if len(body) <= _LIMIT:
         return body
-    short = [marker, heading, document.summary.strip(), ""]
-    for title, field_name in _SECTIONS:
-        if field_name not in _SHORT_SECTIONS:
-            continue
-        rendered = _render_section(
-            title,
-            getattr(document, field_name),
-            evidence_by_id,
-            repo_full_name,
-            head_sha,
-        )
-        if rendered:
-            short.append(rendered)
-    short.append("The full explanation is on the explanation page.")
+    short = [marker, heading, story, ""]
+    _append_mermaid(short, mermaid)
     short.append(footer)
-    return "\n\n".join(part for part in short if part)
+    trimmed = "\n\n".join(part for part in short if part)
+    if len(trimmed) <= _LIMIT:
+        return trimmed
+    return trimmed[: _LIMIT - 1].rstrip() + "…"
 
 
-def _render_section(title, statements: list[Statement], evidence_by_id, repo: str, sha: str) -> str:
-    if not statements:
+def render_details_comment(
+    *,
+    failure: str | None,
+    repo_full_name: str,
+    pr_number: int,
+    head_sha: str,
+    app_base_url: str,
+    run_id: str,
+    claims=None,
+    sections=None,
+    evidence=None,
+    symbols=None,
+    relationships=None,
+    document_unknowns: list[str] | None = None,
+    review_questions: list[str] | None = None,
+    trace: list | None = None,
+) -> str:
+    marker = details_marker(repo_full_name, pr_number)
+    heading = f"## Details for `{head_sha}`"
+    footer = _footer(app_base_url, run_id)
+    trace_block = render_trace_markdown(trace)
+    if failure:
+        reason = (failure or "The Details view is not available for this commit.").strip()
+        return _bounded("\n\n".join(part for part in (marker, heading, reason, trace_block, footer) if part))
+    details = build_details(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        evidences=evidence or [],
+        claims=claims or [],
+        sections=sections or [],
+        repo=repo_full_name,
+        sha=head_sha,
+        document_unknowns=document_unknowns,
+        review_questions=review_questions,
+    )
+    details_md = render_details_markdown(details)
+    body = "\n\n".join(part for part in (marker, heading, details_md, trace_block, footer) if part)
+    if len(body) <= _LIMIT:
+        return body
+    kept = "\n\n".join(part for part in (marker, heading, trace_block, footer) if part)
+    room = _LIMIT - len(kept) - 2
+    if details_md and room > 80:
+        shortened = details_md[: room - 1].rstrip() + "…"
+        return _bounded("\n\n".join(part for part in (marker, heading, shortened, trace_block, footer) if part))
+    return _bounded(kept)
+
+
+def render_combined_comment(
+    *,
+    document: ExplanationDocument | None,
+    failure: str | None,
+    repo_full_name: str,
+    pr_number: int,
+    head_sha: str,
+    app_base_url: str,
+    run_id: str,
+    evidence_by_id: dict[str, EvidenceRef],
+    change_flow: str | None = None,
+    bullets: list[str] | None = None,
+    mermaid: str | None = None,
+    claims=None,
+    sections=None,
+    evidence=None,
+    symbols=None,
+    relationships=None,
+    document_unknowns: list[str] | None = None,
+    review_questions: list[str] | None = None,
+    trace: list | None = None,
+) -> str:
+    """One comment: Explain, then Details, then Review. The head SHA is in each heading."""
+    del evidence_by_id
+    marker = explain_marker(repo_full_name, pr_number)
+    explain_heading = f"## Explain for `{head_sha}`"
+    details_heading = f"## Details for `{head_sha}`"
+    review_heading = f"## Review for `{head_sha}`"
+    footer = _footer(app_base_url, run_id)
+    trace_block = render_trace_markdown(trace)
+    tail = [part for part in (trace_block, footer) if part]
+    if failure or document is None:
+        explain_reason = (failure or "The Explain view is not available for this commit.").strip()
+        details_reason = (failure or "The Details view is not available for this commit.").strip()
+        review_reason = (failure or "The Review view is not available for this commit.").strip()
+        return _bounded(
+            "\n\n".join(
+                [
+                    marker,
+                    explain_heading,
+                    explain_reason,
+                    details_heading,
+                    details_reason,
+                    review_heading,
+                    review_reason,
+                    *tail,
+                ]
+            )
+        )
+    story = _bullet_block(bullets) or document.summary.strip()
+    explain_parts = [marker, explain_heading, story]
+    _append_mermaid(explain_parts, mermaid)
+    flow_parts: list[str] = []
+    _append_change_flow(flow_parts, change_flow)
+    built = build_details(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        evidences=evidence or [],
+        claims=claims or [],
+        sections=sections or [],
+        repo=repo_full_name,
+        sha=head_sha,
+        document_unknowns=document_unknowns,
+        review_questions=review_questions,
+    )
+    details_md = _markdown_for(built, _DETAILS_TITLES)
+    review_md = _markdown_for(built, _REVIEW_TITLES)
+
+    def assemble(flow: list[str], details_text: str, review_text: str) -> str:
+        parts = [*explain_parts, *flow, details_heading, details_text, review_heading, review_text, *tail]
+        return "\n\n".join(part for part in parts if part)
+
+    body = assemble(flow_parts, details_md, review_md)
+    if len(body) <= _LIMIT:
+        return body
+    without_flow = assemble([], details_md, review_md)
+    if len(without_flow) <= _LIMIT:
+        return without_flow
+    head = "\n\n".join(part for part in (*explain_parts, details_heading) if part)
+    tail_text = "\n\n".join(tail)
+    room = _LIMIT - len(head) - len(review_heading) - len(tail_text) - 8
+    if room < 120:
+        return _bounded(assemble([], "", ""))
+    return _bounded(assemble([], _clip(details_md, room // 2), _clip(review_md, room - room // 2)))
+
+
+def _markdown_for(details: dict, titles: tuple[str, ...]) -> str:
+    by_title = {section.get("title"): section for section in details.get("sections") or []}
+    chosen = [by_title[title] for title in titles if title in by_title]
+    if not chosen:
         return ""
-    lines = [f"### {title}"]
-    for statement in statements:
-        lines.append(f"- **{statement.epistemic}** — {statement.text}")
-        for evidence_id in statement.evidence_ids:
-            item = evidence_by_id.get(evidence_id)
-            if item is None or not item.file:
-                continue
-            lines.append(f"  - [{_label(item)}]({_blob(repo, sha, item)})")
+    return render_details_markdown({"sections": chosen})
+
+
+def _clip(text: str, room: int) -> str:
+    if room <= 1 or not text or len(text) <= room:
+        return text if room > 1 else ""
+    return text[: room - 1].rstrip() + "…"
+
+
+def upsert_marked_comment(
+    comment_client,
+    full_name: str,
+    pr_number: int,
+    body: str,
+    marker: str,
+    *,
+    fallback_id: int | None = None,
+    legacy_marker: str | None = None,
+) -> int:
+    """PATCH the comment that already carries this marker. Create it once if missing."""
+    from app.github.client import GitHubNotFound
+
+    listed = _listed_comments(comment_client, full_name, pr_number)
+    comment_id = _match_comment(listed, marker, legacy_marker, fallback_id)
+    if comment_id is not None:
+        try:
+            comment_client.update_comment(full_name, comment_id, body)
+            return comment_id
+        except GitHubNotFound:
+            pass
+    return int(comment_client.create_comment(full_name, pr_number, body))
+
+
+def publish_combined_comment(
+    comment_client,
+    full_name: str,
+    pr_number: int,
+    body: str,
+    *,
+    fallback_id: int | None = None,
+) -> int:
+    """Write Explain, Details, and Review onto the Explain comment. Retire a leftover Details comment."""
+    comment_id = upsert_marked_comment(
+        comment_client,
+        full_name,
+        pr_number,
+        body,
+        explain_marker(full_name, pr_number),
+        fallback_id=fallback_id,
+        legacy_marker=legacy_explain_marker(full_name, pr_number),
+    )
+    _retire_details_comment(comment_client, full_name, pr_number, keep_id=comment_id)
+    return comment_id
+
+
+def _retire_details_comment(comment_client, full_name: str, pr_number: int, *, keep_id: int) -> None:
+    marker = details_marker(full_name, pr_number)
+    delete_comment = getattr(comment_client, "delete_comment", None)
+    for item in _listed_comments(comment_client, full_name, pr_number):
+        comment_id = int(item["id"])
+        body = item.get("body") or ""
+        if comment_id == int(keep_id) or marker not in body:
+            continue
+        if callable(delete_comment):
+            delete_comment(full_name, comment_id)
+            continue
+        if body.strip() == RETIRED_DETAILS_NOTE:
+            continue
+        comment_client.update_comment(full_name, comment_id, RETIRED_DETAILS_NOTE)
+
+
+def _listed_comments(comment_client, full_name: str, pr_number: int) -> list[dict]:
+    list_comments = getattr(comment_client, "list_comments", None)
+    if list_comments is None:
+        return []
+    return list(list_comments(full_name, pr_number) or [])
+
+
+def _match_comment(listed: list[dict], marker: str, legacy_marker: str | None, fallback_id: int | None) -> int | None:
+    rows = [(int(item["id"]), item.get("body") or "") for item in listed]
+    for comment_id, body in rows:
+        if marker in body:
+            return comment_id
+    if legacy_marker:
+        for comment_id, body in rows:
+            if legacy_marker in body and "view=explain" not in body and "view=details" not in body:
+                return comment_id
+    if fallback_id is None:
+        return None
+    fallback = int(fallback_id)
+    for comment_id, body in rows:
+        if comment_id != fallback:
+            continue
+        if "view=details" in body and "view=explain" not in marker:
+            return None
+        if "view=explain" in body and "view=details" in marker:
+            return None
+        return comment_id
+    return fallback
+
+
+def _failure_body(marker: str, heading: str, failure: str | None, footer: str, fallback: str) -> str:
+    reason = (failure or fallback).strip()
+    parts = [marker, heading, reason]
+    if footer:
+        parts.append(footer)
+    return "\n\n".join(parts)
+
+
+def _bullet_block(bullets: list[str] | None) -> str:
+    lines = [line.strip() for line in (bullets or []) if line and line.strip()]
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _append_mermaid(parts: list[str], mermaid: str | None) -> None:
+    text = (mermaid or "").strip()
+    if not text:
+        return
+    fenced = text.replace("```", "'''")
+    parts.append("```mermaid\n" + fenced + "\n```")
+
+
+def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
+    text = (change_flow or "").strip()
+    if not text:
+        return
+    parts.append("### Change flow\n\n" + _flow_markdown(text))
+
+
+def _flow_markdown(text: str) -> str:
+    """Turn the indented change-flow blob into nested markdown bullets.
+
+    A heading sits at column 0, each item is indented two spaces, and a
+    file:line detail is indented four. Blank lines stay out so the list
+    nests. Nothing is added that the blob does not already say.
+    """
+    lines: list[str] = []
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        level = indent // 2
+        lines.append(f"{'  ' * level}- {raw.strip()}")
     return "\n".join(lines)
 
 
-def _label(item: EvidenceRef) -> str:
-    if item.start_line and item.end_line and item.end_line != item.start_line:
-        return f"{item.file}:{item.start_line}-{item.end_line}"
-    if item.start_line:
-        return f"{item.file}:{item.start_line}"
-    return item.file or "evidence"
+def render_trace_markdown(events: list | None) -> str:
+    """Stage, status, time, and a short message. Payloads stay out of the comment."""
+    lines = ["### Trace"]
+    for row in events or []:
+        if not isinstance(row, dict):
+            continue
+        stage = _trace_field(row.get("stage")).replace("_", " ") or "stage"
+        shown = " · ".join(
+            part
+            for part in (
+                _trace_field(row.get("status")),
+                _trace_field(row.get("created_at")),
+                _trace_field(row.get("message")),
+            )
+            if part
+        )
+        lines.append(f"- **{stage}** — {shown or 'recorded'}")
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)
 
 
-def _blob(repo: str, sha: str, item: EvidenceRef) -> str:
-    url = f"https://github.com/{repo}/blob/{sha}/{item.file}"
-    if item.start_line and item.end_line and item.end_line != item.start_line:
-        return f"{url}#L{item.start_line}-L{item.end_line}"
-    if item.start_line:
-        return f"{url}#L{item.start_line}"
-    return url
+def _trace_field(value: object) -> str:
+    if value is None or isinstance(value, (dict, list)):
+        return ""
+    text = " ".join(str(value).split())
+    lowered = text.lower()
+    if "bearer " in lowered or "ghp_" in text or "ghs_" in text or "github_pat_" in text:
+        return ""
+    return text[:240]
+
+
+def _bounded(body: str) -> str:
+    if len(body) <= _LIMIT:
+        return body
+    return body[: _LIMIT - 1].rstrip() + "…"
 
 
 def _footer(app_base_url: str, run_id: str) -> str:
     if not app_base_url:
-        return "Quick, Deep, and Architecture stay in the explanation app."
+        return "Explain and Details stay in the explanation app."
     link = f"{app_base_url.rstrip('/')}/runs/{run_id}"
-    return f"Open Quick, Deep, and Architecture in the explanation app: {link}"
+    return f"Open Explain and Details in the explanation app: {link}"
+
