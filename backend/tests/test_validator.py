@@ -195,3 +195,55 @@ def test_invented_symbol_drops_the_statement():
     )
     result = validate_response(json.dumps(raw), _packet())
     assert not result.ok
+
+
+def test_area_words_are_not_treated_as_named_symbols():
+    raw = _document(summary="The API and UI changed.", change_flow=[_statement(text="The API calls createSession.")])
+    result = validate_response(json.dumps(raw), _packet())
+    assert result.ok
+    assert result.document is not None
+    assert result.document.summary == "The API and UI changed."
+    assert result.document.change_flow[0].text == "The API calls createSession."
+    assert not any("named symbols" in error for error in result.errors)
+
+
+def test_empty_statements_do_not_blame_area_words():
+    raw = _document(summary="The API and UI changed.", change_flow=[])
+    result = validate_response(json.dumps(raw), _packet())
+    assert not result.ok
+    assert any("every statement was dropped" in error for error in result.errors)
+    assert not any("API" in error or "UI" in error for error in result.errors)
+
+
+def test_summary_naming_an_absent_function_is_cleared():
+    raw = _document(summary="The API and UI call inventedFourthCaller.")
+    result = validate_response(json.dumps(raw), _packet())
+    assert result.ok
+    assert result.document is not None
+    assert result.document.summary == ""
+    assert result.document.change_flow
+    joined = " ".join(result.errors)
+    assert "inventedFourthCaller" in joined
+    assert "API" not in joined
+    assert "UI" not in joined
+
+
+def test_packet_symbol_that_looks_like_an_area_word_is_still_dropped():
+    packet = _packet()
+    packet.symbols.append(
+        SymbolRef(
+            id="sym_api",
+            name="API",
+            kind="function",
+            file_path="src/api.ts",
+            start_line=1,
+            end_line=2,
+            exported=True,
+            changed=True,
+        )
+    )
+    raw = _document(change_flow=[_statement(text="API changed.")])
+    result = validate_response(json.dumps(raw), packet)
+    assert not result.ok
+    assert result.document is not None
+    assert result.document.change_flow == []

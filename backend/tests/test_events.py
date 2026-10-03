@@ -141,10 +141,12 @@ def test_explanation_failure_keeps_analysis_stages(db):
     stored = db.get(AnalysisRun, run.id)
     assert stored.analysis_status == "succeeded"
     assert stored.explanation_status == "failed"
-    assert stored.comment_status == "posted"
+    assert stored.comment_status == "skipped"
     stages = _stages(db, run.id)
     assert stages[: len(FAILURE_STAGES)] == FAILURE_STAGES
     assert ("explanation", "succeeded") not in stages
+    assert ("comment", "posted") not in stages
+    assert ("comment", "skipped") in stages
 
 
 def test_comment_failure_records_comment_once(db):

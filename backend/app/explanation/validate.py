@@ -135,7 +135,7 @@ def _invented_in_statement(statement: Statement, packet: ExplanationPacket, cach
     allowed = cache[key]
     invented = []
     for token in _CAMEL.findall(statement.text):
-        if token in _NOT_SYMBOLS or token in allowed:
+        if token in _NOT_SYMBOLS or token in allowed or not _is_symbol_identifier(token):
             continue
         invented.append(token)
     packet_names = {symbol.name for symbol in packet.symbols}
@@ -155,6 +155,21 @@ def _invented_names(text: str, packet: ExplanationPacket) -> list[str]:
         {
             token
             for token in _CAMEL.findall(text)
-            if token not in blob and token not in _NOT_SYMBOLS
+            if token not in blob and token not in _NOT_SYMBOLS and _is_symbol_identifier(token)
         }
     )
+
+
+def _is_symbol_identifier(token: str) -> bool:
+    """A camelCase or PascalCase name, not an area label such as API or UI.
+
+    The camel scanner also matches short acronyms. Those are labels unless a
+    lowercase letter is followed by an uppercase letter, as in createSession.
+    """
+    seen_lower = False
+    for char in token:
+        if char.islower():
+            seen_lower = True
+        elif char.isupper() and seen_lower:
+            return True
+    return False

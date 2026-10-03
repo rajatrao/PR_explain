@@ -1,3 +1,4 @@
+import json
 import uuid
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,7 @@ from app.db.models import (
     Revision,
 )
 from app.jobs.queue import enqueue_job
+from app.llm.provider import LLMResult
 from app.worker import process_available_job
 from tests.fakes import CountingSource, MemoryComments, ScriptedProvider
 
@@ -90,6 +92,89 @@ def test_explanation_failure_keeps_claims_and_retry_does_not_refetch(db):
     process_available_job(db, settings, snapshot_source=source, provider=failed, comment_client=MemoryComments())
     assert source.calls == 1
     assert _claim_count(db, run.id) > 0
+
+
+def test_explanation_failure_does_not_publish_comment(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    comments = MemoryComments()
+    previous = "## Explain for `old`\n\nprevious prose"
+    comments.comments[41] = previous
+    comments._next = 42
+    run.revision.pull_request.explanation_comment_id = 41
+    db.commit()
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    failed = ScriptedProvider(error="connection refused")
+    process_available_job(db, settings, snapshot_source=source, provider=failed)
+    process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=failed,
+        comment_client=comments,
+    )
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "succeeded"
+    assert stored.explanation_status == "failed"
+    assert stored.comment_status == "skipped"
+    assert comments.comments[41] == previous
+    assert comments.bodies == []
+    assert list(comments.comments) == [41]
+
+
+class _EmptyStatements:
+    id = "fake"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def explain(self, request):  # noqa: ANN001
+        self.calls += 1
+        body = {
+            "summary": "The API and UI changed.",
+            "change_flow": [],
+            "impacts": [],
+            "important_changes": [],
+            "tests": [],
+            "unchanged": [],
+            "unknowns": [],
+            "review_questions": [],
+        }
+        return LLMResult(content=json.dumps(body), latency_ms=1, model="fake-model")
+
+
+def test_empty_statements_keep_packet_explanation(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    settings.app_base_url = "http://explain.example"
+    provider = _EmptyStatements()
+    comments = MemoryComments()
+    process_available_job(db, settings, snapshot_source=source, provider=provider)
+    process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=provider,
+        comment_client=comments,
+    )
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert provider.calls == 1
+    assert stored.analysis_status == "succeeded"
+    assert stored.explanation_status == "succeeded"
+    assert stored.explanation_error is None
+    assert stored.comment_status == "posted"
+    document = next(row.document for row in stored.explanations if row.depth == "quick")
+    rendered = json.dumps(document)
+    assert document["change_flow"]
+    assert "createSession" in rendered
+    assert "inventedFourthCaller" not in rendered
+    assert comments.comments
+    assert "connection refused" not in comments.comments[1]
 
 
 def test_comment_failure_keeps_analysis_and_explanation(db):
