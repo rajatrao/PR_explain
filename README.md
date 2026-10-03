@@ -41,6 +41,47 @@ GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app.pem
 - One conversation comment per pull request, updated in place for each new head SHA. A failed GitHub write does not discard the page.
 - Revision deltas compare claim sets across head SHAs.
 
+## Analysis and explanation
+
+Analysis builds deterministic facts from the head snapshot, the diff, and tree-sitter. There is no model in that path. The facts are stored as symbols, relationships, evidence, and claims.
+
+Explanation narrates a bounded packet of those claims with local Ollama. The model may not invent files, functions, or edges. If the model returns nothing usable, the document is filled from the packet claims.
+
+`analysis_status`, `explanation_status`, and `comment_status` are stored separately. The GitHub comment is posted only after explanation succeeds. If explanation fails, the comment is skipped, and the stored analysis stays.
+
+The stages run in this order:
+
+`snapshot_fetch` → `diff_analysis` → `symbol_analysis` → `change_graph` → `evidence` → `impact` → `claims_persisted` → `explanation_packet_persisted` → `explanation` → `comment`
+
+```mermaid
+flowchart TD
+  subgraph analysis [Analysis]
+    snapshot_fetch["snapshot_fetch — fetch the head snapshot"]
+    diff_analysis["diff_analysis — read the compare diff"]
+    symbol_analysis["symbol_analysis — parse symbols with tree-sitter"]
+    change_graph["change_graph — record calls and imports"]
+    evidence["evidence — collect file and line evidence"]
+    impact["impact — trace reach beyond the diff"]
+    claims_persisted["claims_persisted — store symbols, relationships, evidence, and claims"]
+    explanation_packet_persisted["explanation_packet_persisted — store the bounded packet"]
+    snapshot_fetch --> diff_analysis
+    diff_analysis --> symbol_analysis
+    symbol_analysis --> change_graph
+    change_graph --> evidence
+    evidence --> impact
+    impact --> claims_persisted
+    claims_persisted --> explanation_packet_persisted
+  end
+  subgraph narration [Explanation and comment]
+    explanation["explanation — narrate the packet with Ollama"]
+    comment["comment — post the pull-request comment"]
+    explanation --> comment
+  end
+  explanation_packet_persisted --> explanation
+```
+
+The LLM is used only in explanation, via Ollama, to narrate facts analysis already stored. The web UI reads those stored facts and the grounded document.
+
 ## Tests without Ollama or GitHub
 
 ```bash
