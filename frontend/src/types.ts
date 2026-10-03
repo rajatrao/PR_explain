@@ -94,6 +94,11 @@ export type ChangeFlowDiagram = {
   mermaid?: string;
 };
 
+export type FileChange = {
+  path: string;
+  diff: string;
+};
+
 export type RunDetail = {
   id: string;
   analysis_status: string;
@@ -133,6 +138,7 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
+  changes?: FileChange[];
   details?: {
     sections: {
       title: string;

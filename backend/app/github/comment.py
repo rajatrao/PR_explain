@@ -88,15 +88,13 @@ def render_details_comment(
     relationships=None,
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
-    trace: list | None = None,
 ) -> str:
     marker = details_marker(repo_full_name, pr_number)
     heading = f"## Details for `{head_sha}`"
     footer = _footer(app_base_url, run_id)
-    trace_block = render_trace_markdown(trace)
     if failure:
         reason = (failure or "The Details view is not available for this commit.").strip()
-        return _bounded("\n\n".join(part for part in (marker, heading, reason, trace_block, footer) if part))
+        return _bounded("\n\n".join(part for part in (marker, heading, reason, footer) if part))
     details = build_details(
         symbols=symbols or [],
         relationships=relationships or [],
@@ -109,14 +107,14 @@ def render_details_comment(
         review_questions=review_questions,
     )
     details_md = render_details_markdown(details)
-    body = "\n\n".join(part for part in (marker, heading, details_md, trace_block, footer) if part)
+    body = "\n\n".join(part for part in (marker, heading, details_md, footer) if part)
     if len(body) <= _LIMIT:
         return body
-    kept = "\n\n".join(part for part in (marker, heading, trace_block, footer) if part)
+    kept = "\n\n".join(part for part in (marker, heading, footer) if part)
     room = _LIMIT - len(kept) - 2
     if details_md and room > 80:
         shortened = details_md[: room - 1].rstrip() + "…"
-        return _bounded("\n\n".join(part for part in (marker, heading, shortened, trace_block, footer) if part))
+        return _bounded("\n\n".join(part for part in (marker, heading, shortened, footer) if part))
     return _bounded(kept)
 
 
@@ -140,7 +138,6 @@ def render_combined_comment(
     relationships=None,
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
-    trace: list | None = None,
     patches: dict[str, str] | None = None,
 ) -> str:
     """One comment: Explain, then Details, then Review. The head SHA is in each heading."""
@@ -150,8 +147,7 @@ def render_combined_comment(
     details_heading = f"## Details for `{head_sha}`"
     review_heading = f"## Review for `{head_sha}`"
     footer = _footer(app_base_url, run_id)
-    trace_block = render_trace_markdown(trace)
-    tail = [part for part in (trace_block, footer) if part]
+    tail = [footer] if footer else []
     if failure or document is None:
         explain_reason = (failure or "The Explain view is not available for this commit.").strip()
         details_reason = (failure or "The Details view is not available for this commit.").strip()
@@ -418,38 +414,6 @@ def _flow_markdown(text: str) -> str:
         level = indent // 2
         lines.append(f"{'  ' * level}- {raw.strip()}")
     return "\n".join(lines)
-
-
-def render_trace_markdown(events: list | None) -> str:
-    """Stage, status, time, and a short message. Payloads stay out of the comment."""
-    lines = ["### Trace"]
-    for row in events or []:
-        if not isinstance(row, dict):
-            continue
-        stage = _trace_field(row.get("stage")).replace("_", " ") or "stage"
-        shown = " · ".join(
-            part
-            for part in (
-                _trace_field(row.get("status")),
-                _trace_field(row.get("created_at")),
-                _trace_field(row.get("message")),
-            )
-            if part
-        )
-        lines.append(f"- **{stage}** — {shown or 'recorded'}")
-    if len(lines) == 1:
-        return ""
-    return "\n".join(lines)
-
-
-def _trace_field(value: object) -> str:
-    if value is None or isinstance(value, (dict, list)):
-        return ""
-    text = " ".join(str(value).split())
-    lowered = text.lower()
-    if "bearer " in lowered or "ghp_" in text or "ghs_" in text or "github_pat_" in text:
-        return ""
-    return text[:240]
 
 
 def _bounded(body: str) -> str:

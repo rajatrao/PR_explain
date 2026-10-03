@@ -289,58 +289,33 @@ def test_leftover_details_comment_is_deleted_when_the_client_supports_it():
     assert "second bullet" in comments.comments[1]
 
 
-def test_combined_comment_includes_short_trace_and_updates_in_place():
+def test_combined_comment_omits_trace_and_updates_in_place():
     comments = MemoryComments()
-    trace = [
-        {
-            "stage": "webhook_received",
-            "status": "succeeded",
-            "created_at": "2026-10-02T23:01:00+00:00",
-            "message": "Received pull_request webhook",
-            "detail": {"token": "ghp_secret", "body": "do not store this body"},
-        },
-        {
-            "stage": "AGENT_REPORTED",
-            "status": "succeeded",
-            "created_at": "2026-10-02T23:01:01+00:00",
-            "message": "Reported agent dependabot[bot]",
-        },
-    ]
-    first = _combined(head_sha=OLD, run_id="run-old", bullets=["first"], mermaid=None, trace=trace)
-    assert "### Trace" in first
-    assert first.index("## Review for") < first.index("### Trace")
-    assert "webhook received" in first
-    assert "succeeded" in first
-    assert "2026-10-02T23:01:00+00:00" in first
-    assert "Received pull_request webhook" in first
-    assert "AGENT REPORTED" in first
-    assert "dependabot[bot]" in first
-    assert "ghp_secret" not in first
-    assert "do not store this body" not in first
+    first = _combined(head_sha=OLD, run_id="run-old", bullets=["first"], mermaid=None)
+    assert "### Trace" not in first
+    assert "webhook received" not in first.lower()
+    assert "AGENT REPORTED" not in first
+    assert "Received pull_request webhook" not in first
+    assert "dependabot[bot]" not in first
     assert "```" not in first
     assert "view=explain" in first
     assert "view=details" not in first
+    explain, rest = first.split("## Details for", 1)
+    _details, review = rest.split("## Review for", 1)
+    assert "### Reviewer Attention" in review
+    assert "### Review questions" in review
+    assert "trace" not in review.lower()
 
     first_id = publish_combined_comment(comments, "acme/app", 7, first)
-    later = _combined(
-        bullets=["second"],
-        mermaid=None,
-        trace=[
-            *trace,
-            {
-                "stage": "comment",
-                "status": "started",
-                "created_at": "2026-10-02T23:02:00+00:00",
-                "message": "Comment started",
-            },
-        ],
-    )
+    later = _combined(bullets=["second"], mermaid=None)
     second_id = publish_combined_comment(comments, "acme/app", 7, later, fallback_id=first_id)
     assert second_id == first_id
     assert len(comments.comments) == 1
     assert comments._next == first_id + 1
-    assert "Comment started" in comments.comments[first_id]
+    assert "Comment started" not in comments.comments[first_id]
+    assert "### Trace" not in comments.comments[first_id]
     assert OLD not in comments.comments[first_id]
+    assert "second" in comments.comments[first_id]
     assert "## Explain for" in comments.comments[first_id]
     assert "## Details for" in comments.comments[first_id]
     assert "## Review for" in comments.comments[first_id]
