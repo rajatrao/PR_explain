@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
@@ -140,6 +141,7 @@ def render_combined_comment(
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
     trace: list | None = None,
+    patches: dict[str, str] | None = None,
 ) -> str:
     """One comment: Explain, then Details, then Review. The head SHA is in each heading."""
     del evidence_by_id
@@ -186,10 +188,20 @@ def render_combined_comment(
     )
     details_md = _markdown_for(built, _DETAILS_TITLES)
     review_md = _markdown_for(built, _REVIEW_TITLES)
+    changes = build_file_changes(evidence or [], claims or [], patches)
 
     def assemble(flow: list[str], details_text: str, review_text: str) -> str:
         parts = [*explain_parts, *flow, details_heading, details_text, review_heading, review_text, *tail]
         return "\n\n".join(part for part in parts if part)
+
+    if changes:
+        fitted = _fit_file_changes(changes, details_md, review_md, flow_parts, assemble)
+        if fitted is not None:
+            return fitted
+        details_md = _insert_changes(
+            details_md,
+            render_file_changes_markdown(changes, {item["path"]: 1 for item in changes}),
+        )
 
     body = assemble(flow_parts, details_md, review_md)
     if len(body) <= _LIMIT:
@@ -203,6 +215,58 @@ def render_combined_comment(
     if room < 120:
         return _bounded(assemble([], "", ""))
     return _bounded(assemble([], _clip(details_md, room // 2), _clip(review_md, room - room // 2)))
+
+
+def _fit_file_changes(changes, details_md: str, review_md: str, flow: list[str], assemble) -> str | None:
+    """Shrink the largest file bodies until the comment fits. Keep every path."""
+    limits: dict[str, int] = {}
+    seen: set[tuple[str, int]] = set()
+    for _ in range(len(changes) * 12 + 2):
+        block = render_file_changes_markdown(changes, limits or None)
+        body = assemble(flow, _insert_changes(details_md, block), review_md)
+        if len(body) <= _LIMIT:
+            return body
+        path = _largest_change(changes, limits)
+        if path is None:
+            return None
+        current = limits.get(path, len(file_body(next(item for item in changes if item["path"] == path))))
+        if current <= 1:
+            return None
+        overflow = len(body) - _LIMIT
+        nxt = max(1, current - max(overflow, 64))
+        if nxt >= current:
+            nxt = current - 1
+        mark = (path, nxt)
+        if mark in seen:
+            return None
+        seen.add(mark)
+        limits[path] = nxt
+    return None
+
+
+def _largest_change(changes: list[dict], limits: dict[str, int]) -> str | None:
+    ranked = []
+    for item in changes:
+        size = limits.get(item["path"], len(file_body(item)))
+        if size > 1:
+            ranked.append((size, item["path"]))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[-1][1]
+
+
+def _insert_changes(details_md: str, changes_md: str) -> str:
+    if not changes_md:
+        return details_md
+    heading = "### What changed"
+    start = details_md.find(heading)
+    if start == -1:
+        return f"{changes_md}\n\n{details_md}" if details_md else changes_md
+    next_heading = details_md.find("\n### ", start + len(heading))
+    if next_heading == -1:
+        return f"{details_md.rstrip()}\n\n{changes_md}"
+    return f"{details_md[:next_heading].rstrip()}\n\n{changes_md}{details_md[next_heading:]}"
 
 
 def _markdown_for(details: dict, titles: tuple[str, ...]) -> str:

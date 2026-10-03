@@ -16,6 +16,7 @@ from app.explanation.select import build_packet
 from app.explanation.validate import validate_response
 from app.analyzer.diagram import build_change_flow
 from app.github.comment import publish_combined_comment, render_combined_comment
+from app.github.patches import fetch_compare_patches
 from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.queue import enqueue_job
 from app.jobs.store import load_result, persist_result, record_delta, save_packet
@@ -398,6 +399,13 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         document_unknowns=None if failure else _deep_texts(session, run, "unknowns"),
         review_questions=None if failure else _deep_texts(session, run, "review_questions"),
         trace=_trace_for_comment(session, run),
+        patches=fetch_compare_patches(
+            settings,
+            pull.repository.full_name,
+            revision.base_sha,
+            revision.head_sha,
+            pull.repository.installation_id,
+        ),
     )
     try:
         _publish(comment_client, pull, body)
