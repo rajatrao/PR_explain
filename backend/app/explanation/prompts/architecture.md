@@ -1,1 +1,1 @@
-Explain boundaries, exported APIs, database facts, dependency facts, and external systems named by evidence. If the packet has no database or API facts, write an UNKNOWN statement instead of guessing a boundary.
+State exported APIs and dependency facts that are claims in the packet. State database, schema, and external-system facts only when a claim says so. When those claims are absent, copy the UNKNOWN boundary statements already in the packet. Do not describe functions, callers, or files that are not an API or dependency claim.

@@ -10,6 +10,11 @@ class MemoryComments:
         self.comments: dict[int, str] = {}
         self._next = 1
 
+    def list_comments(self, full_name: str, pr_number: int) -> list[dict]:
+        if self.fail:
+            raise RuntimeError("github write failed")
+        return [{"id": comment_id, "body": body} for comment_id, body in self.comments.items()]
+
     def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
         if self.fail:
             raise RuntimeError("github write failed")

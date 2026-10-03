@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import time
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -12,7 +14,11 @@ from app.github.client import GitHubClient, GithubSnapshotSource
 from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.pipeline import execute_analyze, execute_comment, execute_explain
 from app.jobs.queue import claim_next_job
+from app.logsetup import configure_logging
 from app.llm.provider import LLMConfigError, LLMProvider, create_llm_provider
+
+
+logger = logging.getLogger("app.worker")
 
 
 class _FailingProvider:
@@ -49,8 +55,32 @@ def process_available_job(
         if current is not None and current.status == "running":
             current.status = "failed"
             current.last_error = str(exc)[:2000]
+            if current.phase == "analyze":
+                failed_run = session.get(AnalysisRun, current.run_id)
+                if failed_run is not None and failed_run.analysis_status not in {"succeeded", "failed"}:
+                    failed_run.analysis_status = "failed"
+                    failed_run.analysis_error = str(exc)[:2000]
             session.commit()
     return session.get(AnalysisJob, job.id)
+
+
+class _UnavailableCommentClient:
+    """Stand-in used when the installation token cannot be minted.
+
+    Explanation still finishes. The comment step records this error.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+
+    def list_comments(self, full_name: str, pr_number: int) -> list[dict]:
+        raise RuntimeError(self._reason)
+
+    def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
+        raise RuntimeError(self._reason)
+
+    def update_comment(self, full_name: str, comment_id: int, body: str) -> None:
+        raise RuntimeError(self._reason)
 
 
 def _run_job(session, job: AnalysisJob, settings, snapshot_source, comment_client, provider) -> None:
@@ -94,14 +124,50 @@ def _run_job(session, job: AnalysisJob, settings, snapshot_source, comment_clien
         )
         execute_analyze(session, run.id, snapshot, settings)
         return
-    if job.phase == "explain":
-        chosen = provider if provider is not None else _provider_or_failure(settings)
-        execute_explain(session, run.id, job.depth or "developer", chosen, settings, comment_client)
-        return
-    if job.phase == "comment":
-        execute_comment(session, run.id, settings, comment_client)
-        return
-    raise RuntimeError(f"unknown job phase {job.phase}")
+    comment_client, owned_client = _comment_client_for(settings, run, job, comment_client)
+    try:
+        if job.phase == "explain":
+            chosen = provider if provider is not None else _provider_or_failure(settings)
+            execute_explain(session, run.id, job.depth or "quick", chosen, settings, comment_client)
+            return
+        if job.phase == "comment":
+            execute_comment(session, run.id, settings, comment_client)
+            return
+        raise RuntimeError(f"unknown job phase {job.phase}")
+    finally:
+        if owned_client is not None:
+            owned_client.close()
+
+
+def _comment_client_for(settings: Settings, run: AnalysisRun, job: AnalysisJob, comment_client):
+    """Use the injected client, or open an installation client for the PR comment.
+
+    Tests pass a client. The worker process does not, which used to skip the
+    comment after a successful Quick explanation.
+    """
+    needs_comment = job.phase == "comment" or (
+        job.phase == "explain" and (job.depth or "quick") == "quick"
+    )
+    if not needs_comment or comment_client is not None:
+        return comment_client, None
+    installation_id = run.revision.pull_request.repository.installation_id
+    try:
+        token = installation_token(settings, installation_id)
+    except Exception as exc:
+        logger.info("comment client unavailable: %s", type(exc).__name__)
+        return _UnavailableCommentClient(_client_error(exc)), None
+    client = GitHubClient(token=token, api_url=settings.github_api_url)
+    return client, client
+
+
+def _client_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"GitHub token request failed with HTTP {exc.response.status_code}"
+    text = str(exc)
+    lowered = text.lower()
+    if "bearer" in lowered or "token" in lowered or "private key" in lowered:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {text[:240]}"
 
 
 def _provider_or_failure(settings: Settings):
@@ -122,6 +188,11 @@ def main() -> None:
         from app.db.migrate import upgrade
 
         upgrade()
+    configure_logging()
+    logger.info("application logging configured")
+    from app.bootstrap import bootstrap_on_startup
+
+    bootstrap_on_startup(settings)
     factory = session_factory()
     while True:
         with factory() as session:

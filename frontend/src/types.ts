@@ -78,6 +78,22 @@ export type Delta = {
   unchanged_count: number;
 };
 
+export type ChangeFlowItem = {
+  text: string;
+  detail: string | null;
+};
+
+export type ChangeFlowSection = {
+  heading: string;
+  items: ChangeFlowItem[];
+};
+
+export type ChangeFlowDiagram = {
+  sections: ChangeFlowSection[];
+  text: string;
+  mermaid?: string;
+};
+
 export type RunDetail = {
   id: string;
   analysis_status: string;
@@ -115,4 +131,16 @@ export type RunDetail = {
   delta: Delta | null;
   events: RunEvent[];
   depths: string[];
+  change_flow_diagram: ChangeFlowDiagram;
+  explain_bullets: string[];
+  details?: {
+    sections: {
+      title: string;
+      rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      subsections?: {
+        title: string;
+        rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      }[];
+    }[];
+  };
 };

@@ -60,7 +60,7 @@ def record_event(
     except Exception:
         _log_write_failure(stage, run_id, head_sha, status)
         return
-    _log_event(stage, run_id, head_sha, status)
+    _log_event(stage, run_id, head_sha, status, payload["message"])
 
 
 def restore_pipeline_events(session: Session) -> None:
@@ -165,14 +165,15 @@ def _short(value: str | None, limit: int) -> str | None:
     return text[:limit]
 
 
-def _log_event(stage: str, run_id, head_sha, status: str) -> None:
+def _log_event(stage: str, run_id, head_sha, status: str, message: str) -> None:
     try:
         logger.info(
-            "pipeline_event stage=%s run_id=%s head_sha=%s status=%s",
+            "pipeline_event stage=%s run_id=%s head_sha=%s status=%s message=%s",
             stage,
             run_id or "-",
             head_sha or "-",
             status,
+            message,
         )
     except Exception:
         return

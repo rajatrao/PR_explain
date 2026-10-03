@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
@@ -13,20 +14,30 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.analyzer.diagram import build_change_flow
+from app.analyzer.types import Snapshot
 from app.config import get_settings
 from app.db.models import AnalysisRun, PipelineEvent, PullRequest, Revision, RevisionDelta
 from app.db.session import get_db
-from app.github.events import handle_github_event
+from app.explanation.details import build_details
+from app.explanation.narrate import compose_document, explain_bullets
+from app.explanation.select import build_packet
+from app.explanation.validate import validate_response
+from app.jobs.store import load_result
+from app.github.events import ensure_stored_repository, handle_github_event
 from app.github.webhook import verify_signature
 from app.jobs.events import record_event, save_events
-from app.jobs.queue import enqueue_job
+from app.jobs.queue import RetryNotAvailable, enqueue_job, failed_phase, phase_error, requeue_failed_job
+from app.logsetup import configure_logging
 
-DEPTHS = ("quick", "developer", "deep", "architecture")
+logger = logging.getLogger(__name__)
+
+DEPTHS = ("quick", "deep")
 _DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 class DepthBody(BaseModel):
-    depth: str = Field(default="developer")
+    depth: str = Field(default="quick")
 
 
 @asynccontextmanager
@@ -36,6 +47,11 @@ async def lifespan(_app: FastAPI):
         from app.db.migrate import upgrade
 
         upgrade()
+    configure_logging()
+    logger.info("application logging configured")
+    from app.bootstrap import bootstrap_on_startup
+
+    bootstrap_on_startup(settings)
     yield
 
 
@@ -97,7 +113,7 @@ def list_runs(session: Session = Depends(get_db)) -> list[dict]:
         )
         .order_by(AnalysisRun.created_at.desc())
     ).all()
-    return [_summary(run) for run in runs]
+    return [_summary(session, run) for run in runs]
 
 
 @app.get("/api/runs/{run_id}")
@@ -121,12 +137,30 @@ def retry_explanation(
         raise HTTPException(status_code=404, detail="run not found")
     if run.analysis_status != "succeeded":
         raise HTTPException(status_code=409, detail="analysis has not succeeded")
+    _ensure_stored_repository(session, run)
     enqueue_job(session, run.id, "explain", body.depth)
-    if body.depth == "developer" and run.explanation_status != "succeeded":
+    if body.depth == "quick" and run.explanation_status != "succeeded":
         run.explanation_status = "queued"
         run.explanation_error = None
     session.commit()
     return {"status": "queued", "depth": body.depth, "run_id": str(run.id)}
+
+
+@app.post("/api/runs/{run_id}/retry")
+def retry_failed_run(run_id: UUID, session: Session = Depends(get_db)) -> dict:
+    run = session.get(AnalysisRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    _ensure_stored_repository(session, run)
+    try:
+        requeue_failed_job(session, run)
+    except RetryNotAvailable as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    session.commit()
+    loaded = _load_run(session, run_id)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _detail(session, loaded)
 
 
 @app.post("/api/runs/{run_id}/comment")
@@ -136,6 +170,7 @@ def retry_comment(run_id: UUID, session: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="run not found")
     if run.analysis_status != "succeeded":
         raise HTTPException(status_code=409, detail="analysis has not succeeded")
+    _ensure_stored_repository(session, run)
     enqueue_job(session, run.id, "comment", None)
     session.commit()
     return {"status": "queued", "run_id": str(run.id)}
@@ -160,6 +195,16 @@ def get_delta(revision_id: UUID, session: Session = Depends(get_db)) -> dict:
     }
 
 
+def _ensure_stored_repository(session: Session, run: AnalysisRun) -> None:
+    """Retry routes have a run id, not a GitHub pull_request payload.
+
+    A missing installation is created only when this run's repository already
+    stores the installation id and owner/name. Nothing is invented from the
+    run id alone.
+    """
+    ensure_stored_repository(session, run)
+
+
 def _load_run(session: Session, run_id: UUID) -> AnalysisRun | None:
     return session.scalars(
         select(AnalysisRun)
@@ -177,14 +222,45 @@ def _load_run(session: Session, run_id: UUID) -> AnalysisRun | None:
     ).first()
 
 
-def _summary(run: AnalysisRun) -> dict:
+def _visible_statuses(
+    session: Session, run: AnalysisRun
+) -> tuple[str, str, str, str | None, str | None, str | None]:
+    """Report a failed job as a failed phase when the status column was not updated."""
+    analysis_status = run.analysis_status
+    explanation_status = run.explanation_status
+    comment_status = run.comment_status
+    analysis_error = run.analysis_error
+    explanation_error = run.explanation_error
+    comment_error = run.comment_error
+    phase = failed_phase(session, run)
+    if phase == "analyze" and analysis_status != "failed":
+        analysis_status = "failed"
+        analysis_error = analysis_error or phase_error(session, run, "analyze")
+    elif phase == "explain" and explanation_status != "failed":
+        explanation_status = "failed"
+        explanation_error = explanation_error or phase_error(session, run, "explain")
+    elif phase == "comment" and comment_status != "failed":
+        comment_status = "failed"
+        comment_error = comment_error or phase_error(session, run, "comment")
+    return (
+        analysis_status,
+        explanation_status,
+        comment_status,
+        analysis_error,
+        explanation_error,
+        comment_error,
+    )
+
+
+def _summary(session: Session, run: AnalysisRun) -> dict:
     revision = run.revision
     pull = revision.pull_request
+    analysis_status, explanation_status, comment_status, _, _, _ = _visible_statuses(session, run)
     return {
         "id": str(run.id),
-        "analysis_status": run.analysis_status,
-        "explanation_status": run.explanation_status,
-        "comment_status": run.comment_status,
+        "analysis_status": analysis_status,
+        "explanation_status": explanation_status,
+        "comment_status": comment_status,
         "language_coverage": run.language_coverage,
         "repository": pull.repository.full_name,
         "pr_number": pull.number,
@@ -217,14 +293,22 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
     delta = session.scalars(
         select(RevisionDelta).where(RevisionDelta.revision_id == revision.id)
     ).first()
+    (
+        analysis_status,
+        explanation_status,
+        comment_status,
+        analysis_error,
+        explanation_error,
+        comment_error,
+    ) = _visible_statuses(session, run)
     return {
         "id": str(run.id),
-        "analysis_status": run.analysis_status,
-        "explanation_status": run.explanation_status,
-        "comment_status": run.comment_status,
-        "analysis_error": run.analysis_error,
-        "explanation_error": run.explanation_error,
-        "comment_error": run.comment_error,
+        "analysis_status": analysis_status,
+        "explanation_status": explanation_status,
+        "comment_status": comment_status,
+        "analysis_error": analysis_error,
+        "explanation_error": explanation_error,
+        "comment_error": comment_error,
         "language_coverage": run.language_coverage,
         "revision": {
             "id": str(revision.id),
@@ -286,7 +370,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             }
             for row in run.evidences
         ],
-        "explanations": explanations,
+        "explanations": _with_depth_documents(session, run, map_stored_explanations(explanations)),
         "delta": None
         if delta is None
         else {
@@ -297,14 +381,104 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         },
         "events": _events(session, run),
         "depths": list(DEPTHS),
+        "change_flow_diagram": (story := build_change_flow(run.symbols, run.relationships_, run.evidences)),
+        "explain_bullets": explain_bullets(run.claims),
+        "details": build_details(
+            symbols=run.symbols,
+            relationships=run.relationships_,
+            evidences=run.evidences,
+            claims=run.claims,
+            sections=story["sections"],
+            repo=repository.full_name,
+            sha=revision.head_sha,
+            document_unknowns=_document_texts(explanations, "unknowns"),
+            review_questions=_document_texts(explanations, "review_questions"),
+        ),
     }
+
+
+def _document_texts(explanations: dict, field: str) -> list[str]:
+    deep = explanations.get("deep") or {}
+    document = deep.get("document") if deep.get("status") == "succeeded" else None
+    if not isinstance(document, dict):
+        return []
+    texts: list[str] = []
+    for statement in document.get(field) or []:
+        text = statement.get("text") if isinstance(statement, dict) else None
+        if text and text not in texts:
+            texts.append(text)
+    return texts
+
+
+def map_stored_explanations(stored: dict) -> dict:
+    """Return Quick and Deep. A new deep row wins; an older developer row fills Deep until then."""
+    visible: dict = {}
+    quick = stored.get("quick")
+    if quick:
+        visible["quick"] = {**quick, "depth": "quick"}
+    deep = stored.get("deep")
+    developer = stored.get("developer")
+    chosen = None
+    if deep and deep.get("document") and deep.get("status") == "succeeded":
+        chosen = deep
+    elif developer and developer.get("document"):
+        chosen = developer
+    elif deep:
+        chosen = deep
+    if chosen is not None:
+        visible["deep"] = {**chosen, "depth": "deep"}
+    return visible
+
+
+def _with_depth_documents(session: Session, run: AnalysisRun, explanations: dict) -> dict:
+    """Fill Quick and Deep from the analysis. Leave a stored developer body when Deep cannot be built."""
+    if run.analysis_status != "succeeded":
+        return explanations
+    try:
+        result = load_result(session, run)
+    except Exception:
+        logger.exception("depth documents were left unchanged")
+        return explanations
+    revision = run.revision
+    snapshot = Snapshot(
+        repository=revision.pull_request.repository.full_name,
+        base_sha=revision.base_sha,
+        head_sha=revision.head_sha,
+        files={},
+        changes=[],
+        pr_number=revision.pull_request.number,
+        pr_title=revision.title,
+        pr_body=revision.body,
+    )
+    budget = _settings.explanation_packet_char_budget
+    for depth in DEPTHS:
+        packet = build_packet(result, snapshot, depth, budget)  # type: ignore[arg-type]
+        composed = compose_document(packet)
+        checked = validate_response(composed.model_dump_json(), packet)
+        if not checked.ok or checked.document is None or not checked.document.statements():
+            continue
+        payload = checked.document.model_dump(mode="json")
+        current = explanations.get(depth)
+        if current is None:
+            explanations[depth] = {
+                "depth": depth,
+                "status": "succeeded",
+                "provider": None,
+                "model": None,
+                "error": None,
+                "document": payload,
+            }
+            continue
+        if current.get("status") == "succeeded":
+            current["document"] = payload
+    return explanations
 
 
 def _events(session: Session, run: AnalysisRun) -> list[dict]:
     rows = session.scalars(
         select(PipelineEvent)
         .where(PipelineEvent.run_id == run.id)
-        .order_by(PipelineEvent.ordinal, PipelineEvent.created_at)
+        .order_by(PipelineEvent.created_at, PipelineEvent.ordinal)
     ).all()
     return [
         {

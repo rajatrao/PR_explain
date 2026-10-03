@@ -34,6 +34,7 @@ class GithubInstallation(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     account_login: Mapped[str] = mapped_column(String(255))
+    account_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     repositories: Mapped[list[Repository]] = relationship(
         back_populates="installation",
@@ -45,13 +46,14 @@ class Repository(Base):
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    installation_id: Mapped[int] = mapped_column(
+    installation_id: Mapped[int | None] = mapped_column(
         ForeignKey("github_installations.id", ondelete="CASCADE"),
         index=True,
+        nullable=True,
     )
     full_name: Mapped[str] = mapped_column(String(512), index=True)
     default_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    installation: Mapped[GithubInstallation] = relationship(back_populates="repositories")
+    installation: Mapped[GithubInstallation | None] = relationship(back_populates="repositories")
     pull_requests: Mapped[list[PullRequest]] = relationship(
         back_populates="repository",
         cascade="all, delete-orphan",
