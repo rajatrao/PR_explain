@@ -105,6 +105,9 @@ def render_details_markdown(details: dict) -> str:
         if title == "Impact":
             blocks.append(_impact_markdown(section))
             continue
+        if title == "Change flow":
+            blocks.append(_change_flow_markdown(section))
+            continue
         headers = _TABLE_HEADERS.get(title or "")
         if headers:
             blocks.append(_two_column_markdown(section, headers[0], headers[1]))
@@ -123,6 +126,29 @@ def render_details_markdown(details: dict) -> str:
             body = f"{body}\n\n{subsections}"
         blocks.append(body)
     return "\n\n".join(blocks)
+
+
+def _change_flow_markdown(section: dict) -> str:
+    """Nested bullets, one call per line, with a blank line under the heading."""
+    lines = ["### Change flow", ""]
+    groups: list[tuple[str, list]] = []
+    for row in section.get("rows") or []:
+        label = row.get("label") or "Item"
+        if groups and groups[-1][0] == label:
+            groups[-1][1].append(row)
+        else:
+            groups.append((label, [row]))
+    if not groups:
+        lines.append("- **Item** — none found")
+        return "\n".join(lines)
+    for label, grouped in groups:
+        lines.append(f"- **{label}**")
+        for row in grouped:
+            value = row.get("value") or "none found"
+            href = row.get("href")
+            shown = f"[{value}]({href})" if href else value
+            lines.append(f"  - {shown}")
+    return "\n".join(lines)
 
 
 def _two_column_markdown(section: dict, left: str, right: str) -> str:
