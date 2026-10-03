@@ -265,6 +265,24 @@ h1 { font-size: 40px; line-height: 1.05; margin: 8px 0 12px; font-weight: 500; }
 .bullets li { margin: 8px 0; }
 .detail-group { margin: 0 0 18px; }
 .detail-group h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+.file-change {
+  border-bottom: 1px solid #eee6da;
+  padding: 6px 0;
+}
+.file-change summary {
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.file-change pre {
+  margin: 8px 0 4px 1rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
 .detail-row {
   display: grid;
   grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr);

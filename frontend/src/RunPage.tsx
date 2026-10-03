@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
-import type { ChangeFlowDiagram, Epistemic, RunDetail } from "./types";
+import type { ChangeFlowDiagram, Epistemic, FileChange, RunDetail } from "./types";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -344,7 +344,7 @@ const TABLE_HEADERS: Record<string, [string, string]> = {
   "Key Changes": ["Change", "Location"],
   "Behavior Changes": ["Call", "Evidence"],
   "Risk Areas": ["Where", "Why look"],
-  "Suggested review areas": ["Area", "Why look"],
+  "Suggested review areas": ["Where", "Why look"],
 };
 
 function detailsSectionOrder<T extends { title: string }>(sections: T[]): T[] {
@@ -367,21 +367,43 @@ function DetailsView({ run }: { run: RunDetail }) {
   const sections = detailsSectionOrder(run.details?.sections ?? []).filter(
     (section) => !HIDDEN_ON_DETAILS.has(section.title),
   );
+  const changes = run.changes ?? [];
+  const hasWhatChanged = sections.some((section) => section.title === "What changed");
   return (
     <section className="narrative">
-      {sections.length === 0 ? (
+      {sections.length === 0 && changes.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
-        sections.map((section) => (
-          <DetailGroup
-            key={section.title}
-            title={section.title}
-            rows={section.rows}
-            wrapFirst={WRAP_FIRST_COLUMN.has(section.title)}
-          />
-        ))
+        <>
+          {sections.map((section) => (
+            <Fragment key={section.title}>
+              <DetailGroup
+                title={section.title}
+                rows={section.rows}
+                wrapFirst={WRAP_FIRST_COLUMN.has(section.title)}
+              />
+              {section.title === "What changed" ? <FileChanges changes={changes} /> : null}
+            </Fragment>
+          ))}
+          {hasWhatChanged ? null : <FileChanges changes={changes} />}
+        </>
       )}
     </section>
+  );
+}
+
+function FileChanges({ changes }: { changes: FileChange[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <div className="detail-group file-changes">
+      <h3>Changes</h3>
+      {changes.map((file) => (
+        <details className="file-change" key={file.path}>
+          <summary>{file.path}</summary>
+          <pre>{file.diff}</pre>
+        </details>
+      ))}
+    </div>
   );
 }
 
