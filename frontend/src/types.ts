@@ -142,7 +142,12 @@ export type RunDetail = {
   details?: {
     sections: {
       title: string;
-      rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      rows: {
+        label: string;
+        value: string;
+        href?: string | null;
+        evidence?: string | null;
+      }[];
       subsections?: {
         title: string;
         rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];

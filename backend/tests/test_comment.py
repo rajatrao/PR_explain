@@ -115,7 +115,8 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "## Diagram" not in second
     assert "```mermaid" not in details
     assert "```mermaid" not in review
-    assert "### Change Overview" in details
+    assert "### Change Overview" not in details
+    assert "Change Overview" not in details
     assert "| Area | Reason | Evidence file |" in details
     assert "### Unknowns" in details
     assert "### Reviewer Attention" not in details
@@ -166,7 +167,6 @@ class _Claim:
 
 
 _DETAILS_ORDER = [
-    "### Change Overview",
     "### High-level areas affected",
     "### Key Changes",
     "### Behavior Changes",
@@ -196,7 +196,10 @@ def test_combined_comment_reuses_explain_and_retires_details():
         {"heading": "Changed", "items": [{"text": "login", "detail": None}]},
         {"heading": "login", "items": [{"text": "calls createSession", "detail": "src/login.ts:4"}]},
     ]
-    claims = [_Claim("symbol_changed", "login", "login changed in src/login.ts.")]
+    claims = [
+        _Claim("symbol_changed", "login", "login changed in src/login.ts."),
+        _Claim("unknown_boundary", "Unknown", "No dependency facts are in this packet."),
+    ]
     first = _combined(
         document=_document("first"),
         head_sha=OLD,
@@ -205,6 +208,10 @@ def test_combined_comment_reuses_explain_and_retires_details():
         evidence_by_id={},
         claims=claims,
         sections=sections,
+        document_unknowns=[
+            "No database or schema facts are in this packet.",
+            "No external system facts are in this packet.",
+        ],
     )
     explain, rest = first.split("## Details for", 1)
     details, review = rest.split("## Review for", 1)
@@ -213,9 +220,19 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert "### Reviewer Attention" not in details
     assert "What changed" in details
     assert "| Area | Reason | Evidence file |" in details
+    assert "### Change Overview" not in details
+    assert "Change Overview" not in details
     assert "```mermaid" in explain
     assert "### Diagram" not in explain
     assert review.index("### Reviewer Attention") < review.index("### Review questions")
+    assert "No dependency facts are in this packet" in details
+    assert "No database or schema facts are in this packet" in details
+    assert "No external system facts are in this packet" in details
+    assert "No dependency facts are in this packet" not in review
+    assert "No database or schema facts are in this packet" not in review
+    assert "No external system facts are in this packet" not in review
+    assert "**Unknown**" not in review
+    assert "Claims stay. Narration is optional." not in first
     assert "view=details" not in first
 
     assert publish_combined_comment(comments, "acme/app", 7, first, fallback_id=explain_id) == explain_id
