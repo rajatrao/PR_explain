@@ -7,7 +7,6 @@ from app.explanation.schema import EvidenceRef, ExplanationDocument
 _LIMIT = 60000
 
 _DETAILS_TITLES = (
-    "Change Overview",
     "High-level areas affected",
     "Key Changes",
     "Behavior Changes",

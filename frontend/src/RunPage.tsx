@@ -282,7 +282,12 @@ function ChangeFlowDiagram({ diagram }: { diagram: ChangeFlowDiagram }) {
   );
 }
 
-type DetailRow = { label: string; value: string; href?: string | null; evidence?: string | null };
+type DetailRow = {
+  label: string;
+  value: string;
+  href?: string | null;
+  evidence?: string | null;
+};
 
 function MermaidDiagram({ chart }: { chart: string }) {
   const host = useRef<HTMLDivElement>(null);
@@ -322,7 +327,6 @@ function MermaidDiagram({ chart }: { chart: string }) {
 }
 
 const DETAILS_ORDER = [
-  "Change Overview",
   "High-level areas affected",
   "Key Changes",
   "Behavior Changes",
@@ -414,7 +418,6 @@ function isDetailRow(row: DetailRow | null): row is DetailRow {
 function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
   const visible = rows.filter(isDetailRow);
   const impact = title === "Impact";
-  const overview = title === "Change Overview";
   const headers = TABLE_HEADERS[title];
   const className = ["detail-group", wrapFirst ? "wrap-first" : "", impact ? "impact" : ""].filter(Boolean).join(" ");
   return (
@@ -422,8 +425,6 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
       <h3>{title}</h3>
       {visible.length === 0 ? (
         <p className="kicker">none found</p>
-      ) : overview ? (
-        <OverviewLines rows={visible} />
       ) : (
         <>
           {impact ? (
@@ -459,19 +460,6 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
         </>
       )}
     </div>
-  );
-}
-
-function OverviewLines({ rows }: { rows: DetailRow[] }) {
-  const lines = rows.map((row) => row.value.trim()).filter((value) => value && value !== "none found");
-  if (lines.length === 0) return <p className="kicker">none found</p>;
-  if (lines.length === 1) return <p>{lines[0]}</p>;
-  return (
-    <ul className="bullets">
-      {lines.map((line, index) => (
-        <li key={`${index}-${line}`}>{line}</li>
-      ))}
-    </ul>
   );
 }
 

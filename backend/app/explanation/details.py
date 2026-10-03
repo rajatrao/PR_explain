@@ -55,7 +55,6 @@ def build_details(
     behavior = _behavior_rows(symbols, relationships, claims, sections or [], evidence_by_id, repo, sha)
     return {
         "sections": [
-            {"title": "Change Overview", "rows": _overview_rows(symbols, claims, behavior, evidence_by_id, repo, sha)},
             {"title": "High-level areas affected", "rows": _area_rows(symbols, claims, evidence_by_id, repo, sha)},
             {"title": "Key Changes", "rows": _key_rows(symbols, claims, evidence_by_id, repo, sha)},
             {"title": "Behavior Changes", "rows": behavior},
@@ -83,7 +82,14 @@ def build_details(
                 "subsections": [
                     {
                         "title": "Suggested review areas",
-                        "rows": _suggested_rows(symbols, claims, evidence_by_id, repo, sha),
+                        "rows": _suggested_rows(
+                            symbols,
+                            claims,
+                            evidence_by_id,
+                            repo,
+                            sha,
+                            document_unknowns or [],
+                        ),
                     }
                 ],
             },
@@ -98,9 +104,6 @@ def render_details_markdown(details: dict) -> str:
         title = section.get("title")
         if title == "Impact":
             blocks.append(_impact_markdown(section))
-            continue
-        if title == "Change Overview":
-            blocks.append(_overview_markdown(section))
             continue
         headers = _TABLE_HEADERS.get(title or "")
         if headers:
@@ -120,22 +123,6 @@ def render_details_markdown(details: dict) -> str:
             body = f"{body}\n\n{subsections}"
         blocks.append(body)
     return "\n\n".join(blocks)
-
-
-def _overview_markdown(section: dict) -> str:
-    lines = ["### Change Overview", ""]
-    values = [
-        row.get("value")
-        for row in section.get("rows") or []
-        if row.get("value") and row.get("value") != "none found"
-    ]
-    if not values:
-        lines.append("none found")
-    elif len(values) == 1:
-        lines.append(values[0])
-    else:
-        lines.extend(f"- {value}" for value in values)
-    return "\n".join(lines)
 
 
 def _two_column_markdown(section: dict, left: str, right: str) -> str:
@@ -188,48 +175,6 @@ def _impact_markdown(section: dict) -> str:
 
 def _md_cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
-
-
-def _overview_rows(symbols, claims, behavior, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    rows: list[dict] = []
-    bits: list[str] = []
-    for symbol in _changed_functions(symbols)[:4]:
-        loc = _location(symbol.file_path, getattr(symbol, "start_line", None), getattr(symbol, "end_line", None))
-        bits.append(f"{symbol.name} in {loc}")
-    if not bits:
-        for claim in claims:
-            if _kind(claim) != "symbol_changed" or not _subject(claim):
-                continue
-            location, _href = _claim_location(claim, evidence_by_id, repo, sha)
-            bits.append(f"{_subject(claim)} in {location}" if location else _subject(claim))
-            if len(bits) == 4:
-                break
-    if bits:
-        rows.append(_row("Changed", f"{_join(bits)} changed.", None))
-        extra = len(_changed_functions(symbols)) - len(bits)
-        if extra > 0:
-            rows.append(_row("Changed", f"{extra} more changed symbols are stored.", None))
-    else:
-        files = [_subject(claim) for claim in claims if _kind(claim) == "file_changed" and _subject(claim)]
-        if files:
-            shown = files[:4]
-            sentence = f"{_join(shown)} changed."
-            if len(files) > len(shown):
-                sentence += f" {len(files) - len(shown)} more changed files are stored."
-            rows.append(_row("Changed", sentence, None))
-    calls: list[str] = []
-    for row in behavior:
-        if row.get("value") in {None, "", "none found"}:
-            continue
-        if row.get("value") == "stored call":
-            calls.append(row["label"])
-        else:
-            calls.append(f"{row['label']} at {row['value']}")
-        if len(calls) == 2:
-            break
-    if calls:
-        rows.append(_row("Calls", f"{_join(calls)}.", None))
-    return rows or [_row("Overview", "none found", None)]
 
 
 def _area_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
@@ -384,13 +329,18 @@ def _risk_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dic
     return rows or [_row("Attention", "none found", None)]
 
 
-def _suggested_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
+def _suggested_rows(symbols, claims, evidence_by_id, repo: str, sha: str, document_unknowns: list[str]) -> list[dict]:
     """Symbol or file to open, with one specific reason.
 
     Directory labels such as Frontend or Database are left out. A path is not
-    an area change. This does not score the change.
+    an area change. Stored unknowns stay on the Details Unknowns section.
+    This does not score the change.
     """
-    return _inspect_rows(symbols, claims, evidence_by_id, repo, sha)
+    return _without_unknowns(
+        _inspect_rows(symbols, claims, evidence_by_id, repo, sha),
+        claims,
+        document_unknowns,
+    )
 
 
 def _subsection_markdown(section: dict) -> str:
@@ -418,25 +368,41 @@ def _subsection_markdown(section: dict) -> str:
 
 
 def _attention_rows(symbols, claims, evidence_by_id, repo: str, sha: str, document_unknowns: list[str]) -> list[dict]:
-    """One inspect item per stored fact: untested change, outside reach, or unknown."""
-    rows = _inspect_rows(symbols, claims, evidence_by_id, repo, sha)
-    seen = {(row["label"], row["value"]) for row in rows}
-    covered = {_clean_fact(row["value"]) for row in rows}
-    for claim in claims:
+    """Changed symbols with no stored test, and files outside the diff that reach one."""
+    rows = _without_unknowns(
+        _inspect_rows(symbols, claims, evidence_by_id, repo, sha),
+        claims,
+        document_unknowns,
+    )
+    return rows or [_row("Inspect", "none found", None)]
+
+
+def _without_unknowns(rows: list[dict], claims, document_unknowns: list[str]) -> list[dict]:
+    """Drop a row labeled Unknown, or whose text is a stored unknown."""
+    unknown_texts = _stored_unknown_texts(claims, document_unknowns)
+    kept: list[dict] = []
+    for row in rows:
+        label = (row.get("label") or "").strip()
+        value = _clean_fact(row.get("value") or "")
+        if label.casefold() == "unknown" or (value and value.casefold() in unknown_texts):
+            continue
+        kept.append(row)
+    return kept
+
+
+def _stored_unknown_texts(claims, document_unknowns: list[str]) -> set[str]:
+    texts: set[str] = set()
+    for text in document_unknowns or []:
+        cleaned = _clean_fact(text).casefold()
+        if cleaned:
+            texts.add(cleaned)
+    for claim in claims or []:
         if _kind(claim) not in _UNKNOWN_KINDS:
             continue
-        text = _clean_fact(_claim_text(claim))
-        if not text or text in covered or _restates_inspect(text, rows):
-            continue
-        covered.add(text)
-        _push(rows, seen, _unknown_attention_label(claim), text, _claim_href(claim, evidence_by_id, repo, sha))
-    for text in document_unknowns:
-        cleaned = _clean_fact(text)
-        if not cleaned or cleaned in covered or _restates_inspect(cleaned, rows):
-            continue
-        covered.add(cleaned)
-        _push(rows, seen, "Unknown", cleaned, None)
-    return rows or [_row("Inspect", "none found", None)]
+        cleaned = _clean_fact(_claim_text(claim)).casefold()
+        if cleaned:
+            texts.add(cleaned)
+    return texts
 
 
 def _inspect_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
@@ -541,14 +507,6 @@ def _short_name(name: str) -> str:
     if "/" in name:
         return name.rstrip("/").rsplit("/", 1)[-1]
     return name
-
-
-def _join(items: list[str]) -> str:
-    if len(items) == 1:
-        return items[0]
-    if len(items) == 2:
-        return f"{items[0]} and {items[1]}"
-    return ", ".join(items[:-1]) + f", and {items[-1]}"
 
 
 def _impact_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
@@ -825,21 +783,6 @@ def _file_reason_why(claim) -> str:
     if not why or why == "none found" or _is_path_list(why) or _is_area_name(why):
         return ""
     return why
-
-
-def _unknown_attention_label(claim) -> str:
-    subject = _subject(claim)
-    if subject and not _is_area_name(subject):
-        return subject
-    return "Unknown"
-
-
-def _restates_inspect(text: str, rows: list[dict]) -> bool:
-    lowered = text.lower()
-    if lowered.startswith("no test references "):
-        name = lowered[len("no test references ") :].strip()
-        return any(row.get("label", "").lower() == name and row.get("value") == "no test reference is stored" for row in rows)
-    return False
 
 
 def _is_area_name(label: str) -> bool:
