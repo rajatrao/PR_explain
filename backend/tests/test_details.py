@@ -1,7 +1,7 @@
 from app.analyzer.analyze import analyze
 from app.analyzer.diagram import build_change_flow
 from app.analyzer.fixture import load_oauth_snapshot
-from app.explanation.details import build_details
+from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import ExplanationDocument
 from app.github.comment import explain_marker, render_combined_comment
 
@@ -11,7 +11,6 @@ def _suggested(details: dict) -> dict:
     return next(item for item in section["subsections"] if item["title"] == "Suggested review areas")
 
 _TITLES = [
-    "Change Overview",
     "High-level areas affected",
     "Key Changes",
     "Behavior Changes",
@@ -29,7 +28,6 @@ _TITLES = [
 ]
 
 _COMMENT_ORDER = [
-    "### Change Overview",
     "### High-level areas affected",
     "### Key Changes",
     "### Behavior Changes",
@@ -78,10 +76,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert gaps
     assert all(not row.get("evidence") for row in gaps)
 
-    overview = " ".join(row["value"] for row in rows["Change Overview"])
-    assert "createSession" in overview
-    assert "src/" in overview
-    assert "calls" in overview
+    assert "Change Overview" not in rows
 
     areas = {row["label"]: row["value"] for row in rows["High-level areas affected"]}
     assert "API" in areas
@@ -111,19 +106,28 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     for banned in ("insecure", "broken", "risky", "approve", "score"):
         assert banned not in risk_text
 
-    attention = " ".join(row["value"] for row in rows["Reviewer Attention"])
-    assert "createSession" in attention or any(row["label"] == "createSession" for row in rows["Reviewer Attention"])
+    attention_rows = rows["Reviewer Attention"]
+    attention = " ".join(row["value"] for row in attention_rows)
+    assert any(row["label"] == "createSession" and row["value"] == "no test reference is stored" for row in attention_rows)
+    assert any(row["label"] == "src/login.ts" and row["value"] == "login calls createSession" for row in attention_rows)
+    assert any(
+        row["label"] == "src/password.ts" and row["value"] == "reaches changed symbol createSession"
+        for row in attention_rows
+    )
+    assert "exported in this pull request" not in attention
     assert "none found" not in attention
+    for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
+        assert banned_label not in {row["label"] for row in attention_rows}
     suggested = _suggested(details)
     assert suggested["title"] == "Suggested review areas"
     assert "Suggested review areas" not in [section["title"] for section in details["sections"]]
     suggested_labels = [row["label"] for row in suggested["rows"]]
-    assert "API" in suggested_labels
-    assert "Auth" in suggested_labels
-    assert "Database" not in suggested_labels
-    assert any(row["value"] == "no test reference is stored" for row in suggested["rows"])
+    for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
+        assert banned_label not in suggested_labels
+    assert any(row["label"] == "createSession" and row["value"] == "no test reference is stored" for row in suggested["rows"])
+    assert any(row["label"] == "src/login.ts" and row["value"] == "login calls createSession" for row in suggested["rows"])
     assert any(
-        "reaches changed symbol" in row["value"] or "not in the diff" in row["value"]
+        row["label"] == "src/password.ts" and row["value"] == "reaches changed symbol createSession"
         for row in suggested["rows"]
     )
     suggested_text = " ".join(row["value"] for row in suggested["rows"]).lower()
@@ -139,7 +143,10 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert shared["value"].count(",") >= 1
 
     assert any(row["value"] == "no test reference" for row in rows["Tests"])
-    assert any("refreshToken" in row["label"] or "refreshToken" in row["value"] for row in rows["Review questions"])
+    assert rows["Review questions"] == [{"label": "Review", "value": "none found", "href": None}]
+    question_text = " ".join(row["value"] for row in rows["Review questions"]).lower()
+    assert "what test should reference" not in question_text
+    assert "does this look correct" not in question_text
 
     for row in rows["Unchanged boundary"]:
         if row["value"].startswith("reaches changed symbol"):
@@ -184,6 +191,8 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("### Unknowns") + 1]
     places = [details.index(title) for title in detail_titles]
     assert places == sorted(places)
+    assert "### Change Overview" not in details
+    assert "Change Overview" not in details
     assert "| Area | Names |" in details
     assert "| Change | Location |" in details
     assert "| Call | Evidence |" in details
@@ -196,7 +205,9 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Reviewer Attention" in review
     assert "#### Suggested review areas" in review
     assert "### Suggested review areas" not in body.replace("#### Suggested review areas", "")
-    assert "| Area | Why look |" in review
+    assert "| Where | Why look |" in review
+    assert "### Trace" not in body
+    assert "what test should reference" not in review.lower()
     attention_at = review.index("### Reviewer Attention")
     suggested_at = review.index("#### Suggested review areas")
     questions_at = review.index("### Review questions")
@@ -268,6 +279,8 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
             "src/b.ts is absent from the diff, but a call or import path reaches changed symbol changedFn, so its behavior is not unchanged.",
         ),
         _Claim("missing_test", "caller", "No test references caller."),
+        _Claim("unknown_boundary", "Unknown", "No dependency facts are in this packet."),
+        _Claim("unknown_boundary", None, "No external system facts are in this packet."),
     ]
     details = build_details(
         symbols=[symbol],
@@ -277,6 +290,13 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
         sections=[],
         repo="acme/app",
         sha="a" * 40,
+        document_unknowns=["No database or schema facts are in this packet."],
+        review_questions=[
+            "Is changedFn tested?",
+            "Does this look correct?",
+            "Does caller still pass the value changedFn returns?",
+            "Should we approve this insecure change?",
+        ],
     )
     rows = {section["title"]: section["rows"] for section in details["sections"]}
     behavior = rows["Behavior Changes"]
@@ -292,13 +312,26 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
 
     attention_labels = [row["label"] for row in rows["Reviewer Attention"]]
     assert "changedFn" in attention_labels
-    assert any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"] if row["label"] == "changedFn")
+    assert any(row["label"] == "changedFn" and row["value"] == "no test reference is stored" for row in rows["Reviewer Attention"])
+    assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in rows["Reviewer Attention"])
+    assert not any(row["label"] == "Unknown" for row in rows["Reviewer Attention"])
+    for unknown_text in (
+        "No database or schema facts are in this packet",
+        "No dependency facts are in this packet",
+        "No external system facts are in this packet",
+    ):
+        assert unknown_text not in [row["value"] for row in rows["Reviewer Attention"]]
+        assert any(row["value"] == unknown_text for row in rows["Unknowns"])
+    assert not any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"])
+    assert all(row["label"] != "Database" for row in rows["Reviewer Attention"])
     suggested_rows = _suggested(details)["rows"]
-    assert any(row["label"] == "API" and "changedFn" in row["value"] for row in suggested_rows)
     assert any(row["label"] == "changedFn" and row["value"] == "no test reference is stored" for row in suggested_rows)
     assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in suggested_rows)
-    assert all(row["label"] != "Database" for row in suggested_rows)
+    assert not any(row["label"] == "Unknown" for row in suggested_rows)
+    assert not any("facts are in this packet" in row["value"] for row in suggested_rows)
+    assert all(row["label"] not in {"API", "Database", "Frontend", "Backend", "Auth"} for row in suggested_rows)
     assert "caller" not in {row["label"] for row in suggested_rows}
+    assert [row["value"] for row in rows["Review questions"]] == ["Does caller still pass the value changedFn returns?"]
 
     empty = build_details(
         symbols=[],
@@ -311,6 +344,41 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
     )
     empty_rows = {section["title"]: section["rows"] for section in empty["sections"]}
     assert empty_rows["Behavior Changes"] == [{"label": "Behavior", "value": "none found", "href": None}]
-    assert empty_rows["Change Overview"] == [{"label": "Overview", "value": "none found", "href": None}]
+    assert "Change Overview" not in empty_rows
     assert empty_rows["Reviewer Attention"] == [{"label": "Inspect", "value": "none found", "href": None}]
     assert _suggested(empty)["rows"] == []
+
+
+def test_change_overview_is_absent():
+    symbols = [_Symbol(f"fn{i}", f"src/f{i}.ts") for i in range(7)]
+    symbols.append(_Symbol("fn0b", "src/f0.ts"))
+    claims = [_Claim("file_changed", f"src/f{i}.ts", "changed") for i in range(7)]
+    claims += [_Claim("file_changed", f"pkg/extra{i}.txt", "changed") for i in range(3)]
+    details = build_details(
+        symbols=symbols,
+        relationships=[_Rel("CALLS", "fn0", "other", "src/f0.ts", "src/other.ts", "ev-call")],
+        evidences=[_Evidence("ev-call", "src/f0.ts", 2, 2)],
+        claims=claims,
+        sections=[],
+        repo="acme/app",
+        sha="a" * 40,
+    )
+    titles = [section["title"] for section in details["sections"]]
+    assert "Change Overview" not in titles
+    assert titles[0] == "High-level areas affected"
+    markdown = render_details_markdown(details)
+    assert "### Change Overview" not in markdown
+    assert "Change Overview" not in markdown
+    assert "### High-level areas affected" in markdown
+
+    files_only = build_details(
+        symbols=[],
+        relationships=[],
+        evidences=[],
+        claims=[_Claim("file_changed", f"pkg/file{i}.txt", "changed") for i in range(7)],
+        sections=[],
+        repo="acme/app",
+        sha="a" * 40,
+    )
+    assert "Change Overview" not in [section["title"] for section in files_only["sections"]]
+    assert "Change Overview" not in render_details_markdown(files_only)

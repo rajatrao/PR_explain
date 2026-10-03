@@ -94,11 +94,17 @@ export type ChangeFlowDiagram = {
   mermaid?: string;
 };
 
+export type FileChange = {
+  path: string;
+  diff: string;
+};
+
 export type RunDetail = {
   id: string;
   analysis_status: string;
   explanation_status: string;
   comment_status: string;
+  github_comment_id: number | null;
   analysis_error: string | null;
   explanation_error: string | null;
   comment_error: string | null;
@@ -133,10 +139,16 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
+  changes?: FileChange[];
   details?: {
     sections: {
       title: string;
-      rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      rows: {
+        label: string;
+        value: string;
+        href?: string | null;
+        evidence?: string | null;
+      }[];
       subsections?: {
         title: string;
         rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
