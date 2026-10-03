@@ -19,6 +19,8 @@ from app.analyzer.types import Snapshot
 from app.config import get_settings
 from app.db.models import AnalysisRun, PipelineEvent, PullRequest, Revision, RevisionDelta
 from app.db.session import get_db
+from app.explanation.changes import build_file_changes
+from app.github.patches import fetch_compare_patches
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.select import build_packet
@@ -383,6 +385,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         "depths": list(DEPTHS),
         "change_flow_diagram": (story := build_change_flow(run.symbols, run.relationships_, run.evidences)),
         "explain_bullets": explain_bullets(run.claims),
+        "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
         "details": build_details(
             symbols=run.symbols,
             relationships=run.relationships_,
@@ -395,6 +398,20 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             review_questions=_document_texts(explanations, "review_questions"),
         ),
     }
+
+
+def _patches_for_run(run: AnalysisRun) -> dict[str, str]:
+    """Compare patches for this revision. Missing GitHub access leaves the list empty."""
+    revision = run.revision
+    pull = revision.pull_request
+    repository = pull.repository
+    return fetch_compare_patches(
+        get_settings(),
+        repository.full_name,
+        revision.base_sha,
+        revision.head_sha,
+        repository.installation_id,
+    )
 
 
 def _document_texts(explanations: dict, field: str) -> list[str]:
