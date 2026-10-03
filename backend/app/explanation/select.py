@@ -35,6 +35,37 @@ _PRIORITY = {
     "file_reason": 6,
 }
 
+# Same analysis, two slices. Kinds outside the set are omitted even when the budget can hold them.
+# Older developer and architecture packets use the deep slice.
+_INCLUDED = {
+    "quick": {
+        "symbol_changed",
+        "file_changed",
+        "missing_test",
+        "tests",
+        "reaches_changed",
+        "changed_symbol_cap",
+        "diff_only",
+    },
+    "deep": {
+        "symbol_changed",
+        "file_changed",
+        "calls",
+        "tests",
+        "missing_test",
+        "dependency_changed",
+        "file_reason",
+        "file_absent",
+        "behavior_unchanged",
+        "reaches_changed",
+        "ambiguous_call",
+        "fanout_truncated",
+        "diff_only",
+        "changed_symbol_cap",
+        "defines_api",
+    },
+}
+
 
 def build_packet(
     result: AnalysisResult,
@@ -61,21 +92,17 @@ def build_packet(
     return _materialize(result, snapshot, depth, selected, notes)
 
 
+def _slice(depth: str) -> str:
+    if depth in {"developer", "architecture"}:
+        return "deep"
+    return depth
+
+
 def _rank(kind: str, depth: str) -> int:
-    base = _PRIORITY.get(kind, 7)
-    if depth == "quick" and base > 3:
+    included = _INCLUDED.get(_slice(depth))
+    if included is not None and kind not in included:
         return 100
-    if depth == "architecture" and kind in {
-        "defines_api",
-        "dependency_changed",
-        "reaches_changed",
-        "behavior_unchanged",
-        "file_absent",
-    }:
-        return 0
-    if depth == "deep" and kind in {"calls", "file_reason", "ambiguous_call"}:
-        return min(base, 2)
-    return base
+    return _PRIORITY.get(kind, 7)
 
 
 def _fit(result, snapshot, depth, candidates, notes: list[ContextNote], budget: int):
@@ -143,10 +170,14 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
             )
         )
     for claim in selected:
-        if claim.subject:
-            for symbol in result.symbols:
-                if symbol.name == claim.subject or symbol.file_path == claim.subject:
-                    symbol_ids.add(symbol.id)
+        if not claim.subject:
+            continue
+        for symbol in result.symbols:
+            if symbol.name != claim.subject:
+                continue
+            if depth == "quick" and not symbol.changed:
+                continue
+            symbol_ids.add(symbol.id)
 
     symbols = [
         SymbolRef(
@@ -239,21 +270,17 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
         if claim.epistemic == "UNKNOWN"
     ]
     packet_notes = list(notes)
-    if depth == "architecture" and not any(
-        claim.kind in {"defines_api", "dependency_changed"} for claim in selected
-    ):
+    boundary_claims = _boundary_claims(selected) if _slice(depth) == "deep" else []
+    if boundary_claims:
+        claims.extend(boundary_claims)
+        unknowns.extend(
+            UnknownRef(id=f"unk_{claim.id}", text=claim.text, claim_id=claim.id)
+            for claim in boundary_claims
+        )
         packet_notes.append(
             ContextNote(
                 code="no_boundary",
-                text="No database, API, or dependency facts are in this packet.",
-            )
-        )
-    if depth == "deep":
-        hop_count = sum(1 for rel in relationships if rel.type == "CALLS")
-        packet_notes.append(
-            ContextNote(
-                code="one_hop",
-                text=f"Deep depth includes {hop_count} stored one-hop call edges and no second hop.",
+                text=" ".join(claim.text for claim in boundary_claims),
             )
         )
     return ExplanationPacket(
@@ -277,19 +304,54 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
     )
 
 
+def _boundary_claims(selected) -> list[ClaimRef]:
+    """UNKNOWN claims for architecture facts the analysis did not produce."""
+    gaps = []
+    if not any(claim.kind == "defines_api" for claim in selected):
+        gaps.append(("api", "No exported API facts are in this packet."))
+    if not any(claim.kind == "dependency_changed" for claim in selected):
+        gaps.append(("dependency", "No dependency facts are in this packet."))
+    gaps.append(("database", "No database or schema facts are in this packet."))
+    gaps.append(("external", "No external system facts are in this packet."))
+    return [
+        ClaimRef(
+            id=f"cl_unknown_boundary_{code}",
+            epistemic="UNKNOWN",
+            kind="unknown_boundary",
+            text=text,
+            subject=None,
+            evidence_ids=[],
+        )
+        for code, text in gaps
+    ]
+
+
 def _keep_relationship(rel, selected, depth: str) -> bool:
     subjects = {claim.subject for claim in selected if claim.subject}
-    texts = " ".join(claim.text for claim in selected)
-    named = rel.source_name in subjects or rel.target_name in subjects
-    mentioned = rel.source_name in texts or rel.target_name in texts
-    if depth == "deep" and rel.type in {"CALLS", "IMPORTS", "TESTS"} and (named or mentioned):
+    changed_names = {
+        claim.subject
+        for claim in selected
+        if claim.kind == "symbol_changed" and claim.subject
+    }
+    changed_files: set[str] = set()
+    for claim in selected:
+        if claim.kind == "file_changed" and claim.subject:
+            changed_files.add(claim.subject)
+        if claim.kind == "symbol_changed" and " changed in " in claim.text:
+            changed_files.add(claim.text.split(" changed in ", 1)[1].rstrip("."))
+    if _slice(depth) == "quick":
+        return False
+    if _slice(depth) != "deep":
+        return False
+    if rel.type in {"DEFINES_API", "DEPENDS_ON"}:
         return True
-    if depth == "architecture" and rel.type in {"DEFINES_API", "DEPENDS_ON", "CHANGED_IN_PR"}:
-        return named or mentioned or rel.type == "DEPENDS_ON"
-    if rel.type == "CALLS" and (named or mentioned):
-        return True
-    if rel.type in {"TESTS", "CHANGED_IN_PR", "DEFINES_API", "DEPENDS_ON", "IMPORTS"} and (
-        named or mentioned
-    ):
-        return True
-    return False
+    if rel.type == "TESTS":
+        return rel.target_name in subjects or rel.target_name in changed_names
+    if rel.type not in {"CALLS", "IMPORTS"}:
+        return False
+    return (
+        rel.source_name in changed_names
+        or rel.target_name in changed_names
+        or (rel.source_file or "") in changed_files
+        or (rel.target_file or "") in changed_files
+    )

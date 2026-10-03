@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import posixpath
 import re
+from collections.abc import Callable
 
 from app.analyzer.diff import added_lines, overlaps
 from app.analyzer.parse import (
@@ -31,6 +32,7 @@ def analyze(
     *,
     fanout_cap: int = 50,
     max_changed_symbols: int = 80,
+    on_stage: Callable[[str, str, str, dict | None], None] | None = None,
 ) -> AnalysisResult:
     evidences: list[Evidence] = []
     claims: list[Claim] = []
@@ -67,6 +69,15 @@ def analyze(
         relationships.append(Relationship(**kwargs))
         return relationships[-1]
 
+    change_lines = _change_lines(snapshot.changes)
+    _emit(
+        on_stage,
+        "diff_analysis",
+        "succeeded",
+        "Read the compare diff",
+        {"change_count": len(snapshot.changes), "changed_file_count": len(change_lines)},
+    )
+
     scoped, file_only = _scope_files(snapshot)
     symbols: list[Symbol] = []
     imports: list[ImportBinding] = []
@@ -100,6 +111,14 @@ def analyze(
             )
         imports.extend(parsed_imports)
         calls.extend(parsed_calls)
+
+    _emit(
+        on_stage,
+        "symbol_analysis",
+        "succeeded",
+        "Parsed symbols from the snapshot",
+        {"symbol_count": len(symbols), "file_count": len(scoped)},
+    )
 
     language_coverage = "ts" if scoped else "diff_only"
     by_id = {symbol.id: symbol for symbol in symbols}
@@ -260,7 +279,14 @@ def analyze(
                 evidence_ids=[],
             )
 
-    change_lines = _change_lines(snapshot.changes)
+    _emit(
+        on_stage,
+        "change_graph",
+        "succeeded",
+        "Built the change graph",
+        {"relationship_count": len(relationships)},
+    )
+
     changed_functions = []
     for symbol in functions:
         lines = change_lines.get(symbol.file_path)
@@ -496,6 +522,14 @@ def analyze(
             evidence_ids=[],
         )
 
+    _emit(
+        on_stage,
+        "evidence",
+        "succeeded",
+        "Collected evidence",
+        {"evidence_count": len(evidences)},
+    )
+
     adj: dict[str, list[str]] = {}
     for rel in relationships:
         if rel.type in {"CALLS", "IMPORTS"} and rel.source_id and rel.target_id:
@@ -558,6 +592,15 @@ def analyze(
                 support_ids=[absent_claim.id],
             )
 
+    impact_count = sum(1 for claim in claims if claim.kind in {"reaches_changed", "behavior_unchanged"})
+    _emit(
+        on_stage,
+        "impact",
+        "succeeded",
+        "Traced impact beyond the diff",
+        {"impact_count": impact_count},
+    )
+
     return AnalysisResult(
         language_coverage=language_coverage,
         symbols=symbols,
@@ -566,6 +609,15 @@ def analyze(
         claims=claims,
         context_notes=notes,
     )
+
+
+def _emit(on_stage, stage: str, status: str, message: str, detail: dict | None = None) -> None:
+    if on_stage is None:
+        return
+    try:
+        on_stage(stage, status, message, detail)
+    except Exception:
+        return
 
 
 def _scope_files(snapshot: Snapshot) -> tuple[list[str], list[str]]:

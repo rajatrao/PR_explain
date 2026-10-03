@@ -12,6 +12,12 @@ export async function getRun(id: string): Promise<RunDetail> {
   return response.json();
 }
 
+export async function retryRun(id: string): Promise<RunDetail> {
+  const response = await fetch(`/api/runs/${id}/retry`, { method: "POST" });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 export async function requestExplanation(id: string, depth: string): Promise<void> {
   const response = await fetch(`/api/runs/${id}/explanations`, {
     method: "POST",

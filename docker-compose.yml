@@ -45,6 +45,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pr_explain}:${POSTGRES_PASSWORD:-pr_explain}@postgres:5432/${POSTGRES_DB:-pr_explain}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app.pem
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
@@ -53,6 +54,8 @@ services:
       FANOUT_CAP: ${FANOUT_CAP:-50}
       MAX_CHANGED_SYMBOLS: ${MAX_CHANGED_SYMBOLS:-80}
       RUN_MIGRATIONS: "true"
+    volumes:
+      - /Users/rajat/Downloads/hackathon/secrets/explain-pr.2026-10-02.private-key.pem:/run/secrets/github-app.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,12 +85,15 @@ services:
       EXPLANATION_PACKET_CHAR_BUDGET: ${EXPLANATION_PACKET_CHAR_BUDGET:-32000}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app.pem
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       FANOUT_CAP: ${FANOUT_CAP:-50}
       MAX_CHANGED_SYMBOLS: ${MAX_CHANGED_SYMBOLS:-80}
       RUN_MIGRATIONS: "true"
+    volumes:
+      - /Users/rajat/Downloads/hackathon/secrets/explain-pr.2026-10-02.private-key.pem:/run/secrets/github-app.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

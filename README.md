@@ -1,6 +1,6 @@
 # PR Explain
 
-PR Explain turns one pull-request head SHA into evidence-backed claims, then asks a local model to narrate those claims. The same validated Developer explanation is shown in the React app and posted as one pull-request comment. If narration or the comment fails, the analysis stays.
+PR Explain turns one pull-request head SHA into evidence-backed claims, then asks a local model to narrate those claims. Explain is the short change story, shown by default and posted as one pull-request comment. Details is the detailed page. If narration or the comment fails, the analysis stays.
 
 The model does not analyze the repository. Deterministic analysis builds the change graph. Ollama only narrates a stored packet. The web app and the API never call Ollama.
 
@@ -24,10 +24,20 @@ The model does not analyze the repository. Deterministic analysis builds the cha
 
 GitHub App permissions: Metadata read, Contents read, Pull requests read and write. Events: `installation`, `installation_repositories`, and `pull_request` (`opened`, `reopened`, `synchronize`, `closed`). `closed` does not analyze. There is no Checks permission and no review score.
 
+Point `GITHUB_APP_PRIVATE_KEY_FILE` at the downloaded PEM instead of pasting the key into `GITHUB_APP_PRIVATE_KEY`. Compose mounts that host file read-only and sets the env var to the container path:
+
+```yaml
+GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github-app.pem
+```
+
+```yaml
+- /path/to/app.private-key.pem:/run/secrets/github-app.pem:ro
+```
+
 ## What you get
 
 - Analysis status and explanation status are stored separately. A failed explanation leaves claims, files, and symbols on the page.
-- Depths are prompts over one stored packet. The first view generates Developer. Quick, Deep, and Architecture are generated lazily when you open them.
+- Two views share one analysis. Explain is the change story and the diagram. Details is what changed, who calls it, file and line, tests, why a file outside the diff matters, and API or unknown facts.
 - One conversation comment per pull request, updated in place for each new head SHA. A failed GitHub write does not discard the page.
 - Revision deltas compare claim sets across head SHAs.
 

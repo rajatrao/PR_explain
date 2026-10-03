@@ -62,11 +62,36 @@ export type RunSummary = {
   title: string | null;
 };
 
+export type RunEvent = {
+  stage: string;
+  status: string;
+  message: string;
+  detail: Record<string, string | number | boolean> | null;
+  created_at: string | null;
+  head_sha: string | null;
+};
+
 export type Delta = {
   previous_head_sha: string | null;
   added: { text: string; epistemic: Epistemic; kind: string }[];
   removed: { text: string; epistemic: Epistemic; kind: string }[];
   unchanged_count: number;
+};
+
+export type ChangeFlowItem = {
+  text: string;
+  detail: string | null;
+};
+
+export type ChangeFlowSection = {
+  heading: string;
+  items: ChangeFlowItem[];
+};
+
+export type ChangeFlowDiagram = {
+  sections: ChangeFlowSection[];
+  text: string;
+  mermaid?: string;
 };
 
 export type RunDetail = {
@@ -104,5 +129,18 @@ export type RunDetail = {
     }
   >;
   delta: Delta | null;
+  events: RunEvent[];
   depths: string[];
+  change_flow_diagram: ChangeFlowDiagram;
+  explain_bullets: string[];
+  details?: {
+    sections: {
+      title: string;
+      rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      subsections?: {
+        title: string;
+        rows: { label: string; value: string; href?: string | null; evidence?: string | null }[];
+      }[];
+    }[];
+  };
 };
