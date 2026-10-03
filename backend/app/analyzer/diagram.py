@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from app.analyzer.parse import is_dunder_name, is_package_marker, is_test_path
+
 
 def build_change_flow(symbols, relationships, evidences=None) -> dict:
     sections = _sections(symbols, relationships, evidences or [])
@@ -37,11 +39,12 @@ def render_change_flow(sections) -> str:
 
 
 def render_mermaid(symbols, relationships) -> str:
-    """Flowchart of changed symbols and the stored edges that touch them.
+    """Flowchart of changed functions and the stored edges that touch them.
 
-    A calls arrow is a CALLS row whose source or target is a changed
-    function. An imports arrow is an IMPORTS row whose target is a changed
-    function. Other rows are omitted.
+    A changed function is a node even when it has no stored call. A calls
+    arrow is a CALLS row whose source or target is a changed function. An
+    imports arrow is an IMPORTS row whose target is a changed function.
+    Other rows are omitted. Nothing is inferred.
     """
     changed = _changed_functions(symbols)
     if not changed:
@@ -60,6 +63,8 @@ def render_mermaid(symbols, relationships) -> str:
         kind = getattr(symbol, "kind", None) if symbol is not None else None
         file_path = getattr(symbol, "file_path", None) if symbol is not None else None
         name = getattr(symbol, "name", None) if symbol is not None else None
+        if is_dunder_name(name) or is_dunder_name(fallback_name):
+            return
         if kind == "file":
             label = file_path or fallback_file or fallback_name or node_id
         else:
@@ -76,11 +81,17 @@ def render_mermaid(symbols, relationships) -> str:
             current["changed"] = True
 
     for symbol in changed:
+        if _hidden_file(getattr(symbol, "file_path", None)):
+            continue
         symbol_id = _symbol_id(symbol)
         if symbol_id:
             add_node(symbol_id, symbol, symbol.name, symbol.file_path)
 
     for rel in relationships:
+        if _hidden_file(getattr(rel, "source_file", None)) or _hidden_file(getattr(rel, "target_file", None)):
+            continue
+        if _hidden_name(getattr(rel, "source_name", None)) or _hidden_name(getattr(rel, "target_name", None)):
+            continue
         rel_type = getattr(rel, "type", None)
         source = _rel_end(rel, "source")
         target = _rel_end(rel, "target")
@@ -219,10 +230,20 @@ def _sections(symbols, relationships, evidences) -> list[dict]:
     return sections
 
 
+def _hidden_file(path: str | None) -> bool:
+    return bool(path) and (is_test_path(path) or is_package_marker(path))
+
+
+def _hidden_name(name: str | None) -> bool:
+    return is_dunder_name(name)
+
+
 def _changed_functions(symbols) -> list:
     rows = []
     for symbol in symbols:
         if getattr(symbol, "kind", None) != "function" or not getattr(symbol, "changed", False):
+            continue
+        if _hidden_file(getattr(symbol, "file_path", None)) or _hidden_name(getattr(symbol, "name", None)):
             continue
         if not _symbol_id(symbol):
             continue
@@ -243,6 +264,10 @@ def _call_edges(relationships, changed_ids: set[str], changed_files: set[str], e
     seen: set[tuple] = set()
     for rel in relationships:
         if getattr(rel, "type", None) != "CALLS":
+            continue
+        if _hidden_file(getattr(rel, "source_file", None)) or _hidden_file(getattr(rel, "target_file", None)):
+            continue
+        if _hidden_name(getattr(rel, "source_name", None)) or _hidden_name(getattr(rel, "target_name", None)):
             continue
         source = _rel_end(rel, "source")
         target = _rel_end(rel, "target")

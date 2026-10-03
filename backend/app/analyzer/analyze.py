@@ -10,6 +10,9 @@ from app.analyzer.parse import (
     CallSite,
     ImportBinding,
     is_code_path,
+    is_dunder_name,
+    is_test_path,
+    language_of,
     parse_file,
 )
 from app.analyzer.types import (
@@ -83,8 +86,17 @@ def analyze(
     imports: list[ImportBinding] = []
     calls: list[CallSite] = []
     file_symbols: dict[str, Symbol] = {}
+    parsed_languages: set[str] = set()
 
     for path in scoped:
+        language = language_of(path)
+        if language:
+            parsed_languages.add(language)
+        parsed_symbols, parsed_imports, parsed_calls = parse_file(path, snapshot.files[path])
+        if is_test_path(path):
+            imports.extend(parsed_imports)
+            calls.extend(parsed_calls)
+            continue
         file_symbol = Symbol(
             id=f"sym_file_{_slug(path)}",
             name=posixpath.basename(path),
@@ -96,7 +108,6 @@ def analyze(
         )
         file_symbols[path] = file_symbol
         symbols.append(file_symbol)
-        parsed_symbols, parsed_imports, parsed_calls = parse_file(path, snapshot.files[path])
         for symbol in parsed_symbols:
             symbols.append(symbol)
             add_rel(
@@ -120,7 +131,7 @@ def analyze(
         {"symbol_count": len(symbols), "file_count": len(scoped)},
     )
 
-    language_coverage = "ts" if scoped else "diff_only"
+    language_coverage = _language_coverage(parsed_languages)
     by_id = {symbol.id: symbol for symbol in symbols}
     functions = [symbol for symbol in symbols if symbol.kind == "function"]
     by_name: dict[str, list[Symbol]] = {}
@@ -227,6 +238,10 @@ def analyze(
 
     callers_of: dict[str, list[tuple[CallSite, Symbol | None]]] = {}
     for site, callee, caller in resolved_calls:
+        if is_test_path(site.file_path):
+            continue
+        if is_dunder_name(callee.name) or (caller is not None and is_dunder_name(caller.name)):
+            continue
         callers_of.setdefault(callee.id, []).append((site, caller))
 
     kept_pairs: set[tuple[str, str]] = set()
@@ -291,6 +306,8 @@ def analyze(
     for symbol in functions:
         lines = change_lines.get(symbol.file_path)
         if symbol.file_path not in change_lines:
+            continue
+        if is_dunder_name(symbol.name):
             continue
         if overlaps(symbol.start_line, symbol.end_line, lines):
             symbol.changed = True
@@ -422,7 +439,7 @@ def analyze(
     for rel in list(relationships):
         if rel.type != "IMPORTS":
             continue
-        if not rel.source_file or not _is_test(rel.source_file):
+        if not rel.source_file or not is_test_path(rel.source_file):
             continue
         if not rel.target_id:
             continue
@@ -437,7 +454,7 @@ def analyze(
         test_targets.add(rel.target_id)
 
     for site, callee, _caller in resolved_calls:
-        if not _is_test(site.file_path):
+        if not is_test_path(site.file_path):
             continue
         if callee.id in test_targets:
             continue
@@ -496,7 +513,7 @@ def analyze(
     for symbol in interesting.values():
         if symbol.id in test_targets:
             continue
-        if _is_test(symbol.file_path):
+        if is_test_path(symbol.file_path) or is_dunder_name(symbol.name):
             continue
         add_claim(
             id=f"cl_missing_test_{symbol.id}",
@@ -538,7 +555,7 @@ def analyze(
     production_files = [
         path
         for path in file_symbols
-        if path not in change_lines and not _is_test(path)
+        if path not in change_lines and not is_test_path(path)
     ]
     for path in sorted(production_files):
         file_symbol = file_symbols[path]
@@ -631,6 +648,11 @@ def _scope_files(snapshot: Snapshot) -> tuple[list[str], list[str]]:
     if len(tsconfigs) <= 1:
         return code_files, []
     project_dirs = [posixpath.dirname(path) or "." for path in tsconfigs]
+    changed_languages: set[str] = set()
+    for path in changed_paths:
+        language = language_of(path)
+        if language and language != "typescript":
+            changed_languages.add(language)
 
     def project_of(path: str) -> str | None:
         matches = [directory for directory in project_dirs if path == directory or path.startswith(directory + "/")]
@@ -643,6 +665,11 @@ def _scope_files(snapshot: Snapshot) -> tuple[list[str], list[str]]:
     scoped: list[str] = []
     file_only: list[str] = []
     for path in code_files:
+        language = language_of(path)
+        if language and language != "typescript":
+            if language in changed_languages:
+                scoped.append(path)
+            continue
         project = project_of(path)
         if project in changed_projects:
             scoped.append(path)
@@ -655,9 +682,14 @@ def _skipped(path: str) -> bool:
     return any(part in SKIP_DIRS for part in path.split("/"))
 
 
-def _is_test(path: str) -> bool:
-    base = posixpath.basename(path)
-    return ".test." in base or ".spec." in base
+def _language_coverage(languages: set[str]) -> str:
+    ordered = [language for language in ("typescript", "python", "go", "java") if language in languages]
+    if not ordered:
+        return "diff_only"
+    if ordered == ["typescript"]:
+        return "ts"
+    names = {"typescript": "TypeScript", "python": "Python", "go": "Go", "java": "Java"}
+    return ", ".join(names[language] for language in ordered)
 
 
 def _slug(value: str) -> str:
@@ -680,7 +712,24 @@ def _module_index(files: dict[str, str]) -> set[str]:
     return set(files)
 
 
+def _python_relative_module(module: str) -> str:
+    if module.startswith("./") or module.startswith("../"):
+        return module
+    if not module.startswith("."):
+        return module
+    level = 0
+    while level < len(module) and module[level] == ".":
+        level += 1
+    rest = module[level:].replace(".", "/")
+    if level == 1:
+        return f"./{rest}" if rest else "."
+    prefix = "../" * (level - 1)
+    return f"{prefix}{rest}" if rest else prefix
+
+
 def _resolve_module(importer: str, module: str, files: set[str]) -> str | None:
+    if importer.endswith(".py"):
+        module = _python_relative_module(module)
     if not module.startswith("."):
         return None
     base = posixpath.normpath(posixpath.join(posixpath.dirname(importer), module))
@@ -693,6 +742,10 @@ def _resolve_module(importer: str, module: str, files: set[str]) -> str | None:
         f"{base}/index.ts",
         f"{base}/index.tsx",
         f"{base}/index.js",
+        f"{base}.py",
+        f"{base}/__init__.py",
+        f"{base}.go",
+        f"{base}.java",
     ]
     for candidate in candidates:
         if candidate in files:
