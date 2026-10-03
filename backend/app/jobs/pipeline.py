@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.analyzer.analyze import analyze
 from app.analyzer.types import Snapshot
 from app.config import Settings
-from app.db.models import AnalysisRun, ExplanationRow, PipelineEvent, PullRequest
+from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
@@ -398,7 +398,6 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         relationships=stored.relationships,
         document_unknowns=None if failure else _deep_texts(session, run, "unknowns"),
         review_questions=None if failure else _deep_texts(session, run, "review_questions"),
-        trace=_trace_for_comment(session, run),
         patches=fetch_compare_patches(
             settings,
             pull.repository.full_name,
@@ -457,23 +456,6 @@ def _comment_failure_message(exc: Exception) -> str:
     if "bearer" in lowered or "ghp_" in text or "ghs_" in text:
         return type(exc).__name__
     return text[:2000]
-
-
-def _trace_for_comment(session, run) -> list[dict]:
-    rows = session.scalars(
-        select(PipelineEvent)
-        .where(PipelineEvent.run_id == run.id)
-        .order_by(PipelineEvent.created_at, PipelineEvent.ordinal)
-    ).all()
-    return [
-        {
-            "stage": row.stage,
-            "status": row.status,
-            "message": row.message,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        }
-        for row in rows
-    ]
 
 
 def _deep_texts(session, run, field: str) -> list[str]:
