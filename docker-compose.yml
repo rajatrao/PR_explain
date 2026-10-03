@@ -14,6 +14,7 @@ services:
       retries: 20
     networks: [app]
 
+  # Local default narrator. LLM_PROVIDER=openai does not call this container.
   ollama:
     image: ollama/ollama
     ports:
@@ -50,6 +51,10 @@ services:
       GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5173}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       EXPLANATION_PACKET_CHAR_BUDGET: ${EXPLANATION_PACKET_CHAR_BUDGET:-32000}
       FANOUT_CAP: ${FANOUT_CAP:-50}
       MAX_CHANGED_SYMBOLS: ${MAX_CHANGED_SYMBOLS:-80}
@@ -79,6 +84,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pr_explain}:${POSTGRES_PASSWORD:-pr_explain}@postgres:5432/${POSTGRES_DB:-pr_explain}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3-coder:30b}
       OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-180000}

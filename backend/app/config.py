@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     ollama_base_url: str | None = None
     ollama_model: str | None = None
     ollama_timeout_ms: int = 180000
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
+    llm_timeout_ms: int = 180000
     explanation_packet_char_budget: int = 32000
     database_url: str = "sqlite:///./pr_explain.db"
     github_app_id: str | None = None
