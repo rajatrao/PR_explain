@@ -1,4 +1,5 @@
 from app.explanation.schema import EvidenceRef, ExplanationDocument, Statement
+from app.github.patches import patches_from_compare
 from app.github.comment import (
     RETIRED_DETAILS_NOTE,
     details_marker,
@@ -343,3 +344,79 @@ def test_combined_comment_includes_short_trace_and_updates_in_place():
     assert "## Explain for" in comments.comments[first_id]
     assert "## Details for" in comments.comments[first_id]
     assert "## Review for" in comments.comments[first_id]
+
+
+_LOGIN_PATCH = "@@ -4,3 +4,3 @@\n context\n-return token;\n+return session;\n"
+_SESSION_PATCH = "@@ -1,2 +1,2 @@\n-const old = 1;\n+const next = 1;\n"
+
+
+def test_combined_comment_collapses_each_file_after_what_changed():
+    claims = [
+        _Claim("file_changed", "src/login.ts", "src/login.ts is changed in this pull request."),
+        _Claim("file_changed", "src/session.ts", "src/session.ts is changed in this pull request."),
+    ]
+    body = _combined(
+        claims=claims,
+        patches={"src/login.ts": _LOGIN_PATCH, "src/session.ts": _SESSION_PATCH},
+    )
+    explain, rest = body.split("## Details for", 1)
+    details, review = rest.split("## Review for", 1)
+    assert details.index("### What changed") < details.index("### Changes") < details.index("### Change flow")
+    assert details.count("<details>") == 2
+    assert "<details open" not in body
+    assert "<summary>src/login.ts</summary>" in details
+    assert "<summary>src/session.ts</summary>" in details
+    assert "```diff\n@@ -4,3 +4,3 @@\n context\n-return token;\n+return session;\n```" in details
+    assert "-const old = 1;" in details
+    assert "+const next = 1;" in details
+    assert "lines 4-6" not in details
+    assert "lines 1-2" not in details
+    assert "<details>" not in explain
+    assert "<details>" not in review
+    assert "The rest of this file is on the web run page." not in body
+
+
+def test_combined_comment_truncates_large_diffs_and_keeps_paths():
+    claims = [
+        _Claim("file_changed", "src/big.ts", "big changed"),
+        _Claim("file_changed", "src/small.ts", "small changed"),
+    ]
+    body = _combined(
+        claims=claims,
+        patches={
+            "src/big.ts": "@@ -1 +1 @@\n-" + ("x" * 70000) + "\n+y\n",
+            "src/small.ts": "@@ -1 +1 @@\n-old\n+ok\n",
+        },
+    )
+    assert len(body) <= 60000
+    explain, rest = body.split("## Details for", 1)
+    details, review = rest.split("## Review for", 1)
+    assert f"## Explain for `{NEW}`" in body
+    assert f"## Review for `{NEW}`" in body
+    assert "### Reviewer Attention" in review
+    assert "<summary>src/big.ts</summary>" in details
+    assert "<summary>src/small.ts</summary>" in details
+    assert "<details open" not in body
+    assert "The rest of this file is on the web run page." in details
+    assert "+ok" in details
+    assert "x" * 70000 not in body
+    assert "lines 1-2" not in details
+
+
+def test_compare_payload_keeps_added_and_removed_lines():
+    patches = patches_from_compare(
+        {
+            "files": [
+                {
+                    "filename": "frontend/src/RunPage.tsx",
+                    "patch": "@@ -15,6 +15,7 @@\n export function RunPage() {\n-  const [depth, setDepth] = useState(\"developer\");\n+  const [tab, setTab] = useState(\"quick\");\n",
+                },
+                {"filename": "notes.bin", "status": "modified"},
+            ]
+        }
+    )
+    assert patches["frontend/src/RunPage.tsx"].startswith("@@ -15,6 +15,7 @@")
+    assert "-  const [depth, setDepth]" in patches["frontend/src/RunPage.tsx"]
+    assert "+  const [tab, setTab]" in patches["frontend/src/RunPage.tsx"]
+    assert "notes.bin" not in patches
+    assert "lines 15-168" not in patches["frontend/src/RunPage.tsx"]
