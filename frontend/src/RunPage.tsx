@@ -180,7 +180,7 @@ export function RunPage({ id }: { id: string }) {
               </button>
             </section>
           )}
-          <DeltaView run={run} />
+          {tab === "deep" ? <DeltaView run={run} /> : null}
         </div>
       </div>
     </article>
