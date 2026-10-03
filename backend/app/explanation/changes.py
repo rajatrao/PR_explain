@@ -42,7 +42,14 @@ def render_file_changes_markdown(changes: list[dict], limits: dict[str, int] | N
     """Collapsed HTML details, one per path, with the diff in a code fence."""
     if not changes:
         return ""
-    blocks = [_details_block(change, None if limits is None else limits.get(change["path"])) for change in changes]
+    blocks = []
+    for change in changes:
+        limit = None if limits is None else limits.get(change["path"])
+        if limit == 0:
+            continue
+        blocks.append(_details_block(change, limit))
+    if not blocks:
+        return ""
     return "### Changes\n\n" + "\n\n".join(blocks)
 
 
