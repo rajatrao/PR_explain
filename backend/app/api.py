@@ -308,6 +308,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         "analysis_status": analysis_status,
         "explanation_status": explanation_status,
         "comment_status": comment_status,
+        "github_comment_id": pull.explanation_comment_id if comment_status == "posted" else None,
         "analysis_error": analysis_error,
         "explanation_error": explanation_error,
         "comment_error": comment_error,

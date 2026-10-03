@@ -29,6 +29,20 @@ function coverageLabel(value: string): string {
   return COVERAGE_LABEL[value] ?? `Coverage ${value.replaceAll("_", " ")}`;
 }
 
+function githubTarget(run: RunDetail): { href: string; label: string } | null {
+  const parts = run.revision.repository.split("/");
+  if (parts.length !== 2) return null;
+  const [owner, repo] = parts;
+  const number = run.revision.pr_number;
+  if (!owner || !repo || !number) return null;
+  const href = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pull/${number}`;
+  const commentId = run.comment_status === "posted" ? run.github_comment_id : null;
+  if (commentId) {
+    return { href: `${href}#issuecomment-${commentId}`, label: "GitHub comment" };
+  }
+  return { href, label: "GitHub pull request" };
+}
+
 export function RunPage({ id }: { id: string }) {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +83,7 @@ export function RunPage({ id }: { id: string }) {
   const explanation = run.explanations[depth];
   const failedPhase = failedRunPhase(run);
   const viewLabel = TAB_LABEL[depth as TabId] || depth;
+  const github = githubTarget(run);
 
   async function retry() {
     setBusy(true);
@@ -101,6 +116,13 @@ export function RunPage({ id }: { id: string }) {
         {run.revision.repository} #{run.revision.pr_number}
       </p>
       <h1>{run.revision.title || "Pull request"}</h1>
+      {github && (
+        <p className="github-link">
+          <a href={github.href} target="_blank" rel="noreferrer">
+            {github.label}
+          </a>
+        </p>
+      )}
       <p className="sha">{run.revision.head_sha}</p>
       <div className="statuses">
         <span className={`chip ${run.analysis_status}`}>Analysis {run.analysis_status}</span>

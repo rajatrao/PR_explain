@@ -2,6 +2,7 @@ from app.explanation.schema import EvidenceRef, ExplanationDocument, Statement
 from app.github.patches import patches_from_compare
 from app.github.comment import (
     RETIRED_DETAILS_NOTE,
+    _clip_preserving_flow,
     details_marker,
     explain_marker,
     legacy_explain_marker,
@@ -366,6 +367,52 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     assert "<details>" not in explain
     assert "<details>" not in review
     assert "The rest of this file is on the web run page." not in body
+
+
+def test_change_flow_is_a_list_and_is_not_sliced_mid_item():
+    sections = [
+        {
+            "heading": "Changed",
+            "items": [
+                {"text": "RunPage", "detail": None},
+                {"text": "DetailsView", "detail": None},
+                {"text": "FileChanges", "detail": None},
+            ],
+        },
+        {
+            "heading": "RunPage",
+            "items": [
+                {"text": "calls coverageLabel", "detail": "frontend/src/RunPage.tsx:109"},
+                {"text": "calls failedRunPhase", "detail": "frontend/src/RunPage.tsx:70"},
+            ],
+        },
+    ]
+    body = _combined(
+        sections=sections,
+        patches={"src/big.ts": "@@ -1 +1 @@\n-" + ("x" * 70000) + "\n+y\n"},
+    )
+    assert "### Change flow - **Changed**" not in body
+    details = body.split("## Details for", 1)[1].split("## Review for", 1)[0]
+    assert "</details>\n\n### Change flow\n" in details
+    flow = details.split("### Change flow", 1)[1].split("\n### ", 1)[0]
+    assert flow.startswith("\n\n- **Changed**\n")
+    assert "\n  - RunPage\n" in flow
+    assert "\n  - DetailsView\n" in flow
+    assert "\n  - FileChanges\n" in flow
+    assert "\n- **RunPage**\n" in flow
+    assert "\n  - [calls coverageLabel (frontend/src/RunPage.tsx:109)](" in flow
+    assert "\n  - [calls failedRunPhase (frontend/src/RunPage.tsx:70)](" in flow
+    items = [line for line in flow.splitlines() if line.lstrip().startswith("- ")]
+    assert len(items) >= 6
+    assert all(" - **" not in line for line in items)
+    url = f"https://github.com/acme/app/blob/{NEW}/frontend/src/RunPage.tsx#L109"
+    assert url in flow
+    assert url[:-8] + "…" not in body
+    assert len(body) <= 60000
+    partial = url[:48]
+    clipped = _clip_preserving_flow(flow, flow.index(url) + 12)
+    assert partial not in clipped or url in clipped
+    assert "…" in clipped
 
 
 def test_combined_comment_truncates_large_diffs_and_keeps_paths():

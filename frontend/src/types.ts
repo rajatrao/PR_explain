@@ -104,6 +104,7 @@ export type RunDetail = {
   analysis_status: string;
   explanation_status: string;
   comment_status: string;
+  github_comment_id: number | null;
   analysis_error: string | null;
   explanation_error: string | null;
   comment_error: string | null;
