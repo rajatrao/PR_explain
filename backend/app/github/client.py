@@ -13,6 +13,8 @@ from app.analyzer.types import FileChange, Snapshot
 
 SKIP_DIRS = {"node_modules", "dist", "build", "coverage", ".git"}
 _MAX_FILE = 1_000_000
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+_MAX_REDIRECTS = 5
 
 
 class GitHubNotFound(RuntimeError):
@@ -46,16 +48,66 @@ class GitHubClient:
         return self.request("GET", f"/repos/{full_name}/compare/{base_sha}...{head_sha}")
 
     def download_tarball(self, full_name: str, sha: str) -> bytes:
+        owner, repo = full_name.split("/", 1)
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Accept": "application/vnd.github+json",
         }
-        response = self._http.get(
-            f"{self._api_url}/repos/{full_name}/tarball/{sha}",
-            headers=headers,
+        response = self._get_without_cross_host_auth(
+            f"{self._api_url}/repos/{owner}/{repo}/tarball/{sha}",
+            headers,
         )
         response.raise_for_status()
         return response.content
+
+    def _get_without_cross_host_auth(self, url: str, headers: dict[str, str]) -> httpx.Response:
+        """Follow archive redirects ourselves.
+
+        GitHub answers the tarball route with 302 to codeload.github.com and
+        puts a credential in that Location query. codeload rejects the request
+        when the original Authorization header is forwarded.
+        """
+        current = url
+        current_headers = dict(headers)
+        response: httpx.Response | None = None
+        for _ in range(_MAX_REDIRECTS):
+            response = self._http.get(current, headers=current_headers, follow_redirects=False)
+            if response.status_code not in _REDIRECT_STATUSES:
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                return response
+            nxt = httpx.URL(location)
+            base = httpx.URL(current)
+            if nxt.is_relative_url:
+                nxt = base.join(nxt)
+            if nxt.host != base.host:
+                current_headers = {
+                    key: value
+                    for key, value in current_headers.items()
+                    if key.lower() != "authorization"
+                }
+            current = str(nxt)
+        assert response is not None
+        return response
+
+    def list_comments(self, full_name: str, pr_number: int) -> list[dict]:
+        found: list[dict] = []
+        page = 1
+        while page <= 20:
+            batch = self.request(
+                "GET",
+                f"/repos/{full_name}/issues/{pr_number}/comments",
+                params={"per_page": 100, "page": page},
+            )
+            if not batch:
+                break
+            for item in batch:
+                found.append({"id": int(item["id"]), "body": item.get("body") or ""})
+            if len(batch) < 100:
+                break
+            page += 1
+        return found
 
     def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
         payload = self.request(

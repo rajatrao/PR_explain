@@ -1,1 +1,1 @@
-Explain what changed, the major areas, and the most important context. Prefer the changed symbols, their direct callers, and the tests or missing tests. Leave out file-by-file trivia.
+Write at most four sentences in the summary: what changed, what it calls, what is reached from outside the diff, and the tests. Leave the other arrays empty. Do not list every symbol. Do not use hop jargon. The change-flow story is drawn separately from the stored graph.

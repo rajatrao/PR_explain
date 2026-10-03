@@ -1,21 +1,39 @@
-import { useEffect, useState } from "react";
-import { getRun, requestExplanation } from "./api";
-import type { Claim, Epistemic, Evidence, ExplanationDocument, RunDetail, Statement } from "./types";
+import { useEffect, useRef, useState } from "react";
+import mermaid from "mermaid";
+import { getRun, requestExplanation, retryRun } from "./api";
+import type { ChangeFlowDiagram, Epistemic, RunDetail } from "./types";
 
-const SECTIONS: { title: string; key: keyof ExplanationDocument }[] = [
-  { title: "Change flow", key: "change_flow" },
-  { title: "Impacts", key: "impacts" },
-  { title: "Important changes", key: "important_changes" },
-  { title: "Tests", key: "tests" },
-  { title: "Unchanged", key: "unchanged" },
-  { title: "Unknowns", key: "unknowns" },
-  { title: "Review questions", key: "review_questions" },
-];
+mermaid.initialize({
+  startOnLoad: false,
+  securityLevel: "strict",
+  theme: "neutral",
+  flowchart: { htmlLabels: true, curve: "basis" },
+});
+
+const TABS = ["quick", "deep", "review"] as const;
+
+type TabId = (typeof TABS)[number];
+
+const TAB_LABEL: Record<TabId, string> = {
+  quick: "Explain",
+  deep: "Details",
+  review: "Review",
+};
+
+const COVERAGE_LABEL: Record<string, string> = {
+  ts: "Coverage TypeScript",
+  diff_only: "Coverage Diff only",
+};
+
+function coverageLabel(value: string): string {
+  return COVERAGE_LABEL[value] ?? `Coverage ${value.replaceAll("_", " ")}`;
+}
 
 export function RunPage({ id }: { id: string }) {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [depth, setDepth] = useState("developer");
+  const [tab, setTab] = useState<TabId>("quick");
+  const [depth, setDepth] = useState("quick");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -27,8 +45,11 @@ export function RunPage({ id }: { id: string }) {
         if (cancelled) return;
         setRun(next);
         const pending =
+          next.analysis_status === "queued" ||
+          next.analysis_status === "running" ||
           next.explanation_status === "queued" ||
           next.explanation_status === "running" ||
+          next.comment_status === "queued" ||
           next.explanations[depth]?.status === "queued";
         if (pending) timer = window.setTimeout(load, 2000);
       } catch (err) {
@@ -46,8 +67,20 @@ export function RunPage({ id }: { id: string }) {
   if (!run) return <p>Loading explanation…</p>;
 
   const explanation = run.explanations[depth];
-  const document = explanation?.status === "succeeded" ? explanation.document : null;
-  const developerFailed = run.explanation_status === "failed";
+  const failedPhase = failedRunPhase(run);
+  const viewLabel = TAB_LABEL[depth as TabId] || depth;
+
+  async function retry() {
+    setBusy(true);
+    setError(null);
+    try {
+      setRun(await retryRun(run!.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not retry the run");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function generate(nextDepth: string) {
     setBusy(true);
@@ -73,187 +106,448 @@ export function RunPage({ id }: { id: string }) {
         <span className={`chip ${run.analysis_status}`}>Analysis {run.analysis_status}</span>
         <span className={`chip ${run.explanation_status}`}>Explanation {run.explanation_status}</span>
         <span className={`chip ${run.comment_status}`}>Comment {run.comment_status}</span>
-        <span className="chip">{run.language_coverage}</span>
+        <span className="chip coverage">{coverageLabel(run.language_coverage)}</span>
       </div>
-
-      {developerFailed && (
+      {failedPhase && (
         <div className="banner" role="status">
-          <strong>Explanation failed.</strong>
-          <p>{run.explanation_error || "The model did not return a validated document."}</p>
-          <p>Files, symbols, and claims from the analysis are still here.</p>
-          <button type="button" onClick={() => generate("developer")} disabled={busy}>
-            Retry developer explanation
+          <strong>{failedPhase.title}</strong>
+          <p>{failedPhase.detail}</p>
+          {failedPhase.phase === "explanation" && (
+            <p>Files, symbols, and claims from the analysis are still here.</p>
+          )}
+          <button type="button" onClick={() => void retry()} disabled={busy}>
+            Retry
           </button>
         </div>
       )}
-      {run.comment_status === "failed" && run.comment_error && (
+
+      {run.comment_status === "failed" && run.comment_error && failedPhase?.phase !== "comment" && (
         <p className="error">The pull request comment was not updated. {run.comment_error}</p>
       )}
 
-      <div className="tabs">
-        {run.depths.map((item) => (
+      <div className="tabs" role="tablist" aria-label="Explanation">
+        {TABS.map((item) => (
           <button
             key={item}
             type="button"
-            className={item === depth ? "tab active" : "tab"}
-            onClick={() => setDepth(item)}
+            role="tab"
+            aria-selected={item === tab}
+            className={item === tab ? "tab active" : "tab"}
+            onClick={() => {
+              setTab(item);
+              if (item === "review") return;
+              setDepth(item);
+              const existing = run.explanations[item];
+              const pending = existing?.status === "queued" || existing?.status === "running";
+              if ((!existing || existing.status !== "succeeded" || !existing.document) && !pending) {
+                void generate(item);
+              }
+            }}
           >
-            {item}
+            {TAB_LABEL[item]}
           </button>
         ))}
       </div>
 
-      <div className="layout">
+      <div className="layout solo">
         <div>
-          {document ? (
-            <ExplanationView
-              document={document}
-              evidence={run.evidence}
-              repo={run.revision.repository}
-              sha={run.revision.head_sha}
-            />
-          ) : depth === "developer" && developerFailed ? null : (
+          {tab === "review" ? (
+            <ReviewQuestionsView run={run} />
+          ) : run.analysis_status === "succeeded" && tab === "quick" ? (
+            <>
+              <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
+              <ChangeFlowDiagram diagram={run.change_flow_diagram ?? { sections: [], text: "" }} />
+              <section className="narrative">
+                <h2>Explain</h2>
+                <ul className="bullets">
+                  {(run.explain_bullets ?? []).map((item, index) => (
+                    <li key={`${index}-${item}`}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+            </>
+          ) : run.analysis_status === "succeeded" && tab === "deep" ? (
+            <DetailsView run={run} />
+          ) : run.analysis_status === "failed" ? null : (
             <section className="narrative">
               <p>
                 {explanation?.status === "failed"
                   ? explanation.error || "This depth failed validation."
-                  : `No ${depth} narration yet.`}
+                  : `No ${viewLabel} narration yet.`}
               </p>
               <button type="button" className="primary" onClick={() => generate(depth)} disabled={busy}>
-                Generate {depth}
+                Generate {viewLabel}
               </button>
             </section>
           )}
           <DeltaView run={run} />
-          <ClaimsView claims={run.claims} evidence={run.evidence} repo={run.revision.repository} sha={run.revision.head_sha} />
         </div>
-        <aside className="side">
-          <section>
-            <h2>Files</h2>
-            {run.files.map((file) => (
-              <div className="file" key={file.path}>
-                <span>{file.path}</span>
-                {file.changed ? <span className="changed">changed</span> : <span>not in diff</span>}
-              </div>
-            ))}
-          </section>
-          <section>
-            <h2>Symbols</h2>
-            {run.symbols.map((symbol) => (
-              <div className="symbol" key={symbol.id}>
-                {symbol.name}
-                <span className="kicker">
-                  {" "}
-                  {symbol.file_path}:{symbol.start_line}
-                  {symbol.changed ? " · changed" : ""}
-                </span>
-              </div>
-            ))}
-          </section>
-          <section>
-            <h2>Callers</h2>
-            {run.relationships
-              .filter((item) => item.type === "CALLS")
-              .map((item) => (
-                <div className="symbol" key={item.id}>
-                  {item.source} → {item.target}
-                </div>
-              ))}
-          </section>
-        </aside>
       </div>
     </article>
   );
 }
 
-function ExplanationView({
-  document,
-  evidence,
-  repo,
-  sha,
-}: {
-  document: ExplanationDocument;
-  evidence: Evidence[];
-  repo: string;
-  sha: string;
-}) {
+const PHASE_STAGES = {
+  analysis: ["snapshot_fetch", "diff_analysis", "symbol_analysis", "change_graph", "evidence", "impact", "claims_persisted", "explanation_packet_persisted"],
+  explanation: ["explanation"],
+  comment: ["comment"],
+} as const;
+
+function failedRunPhase(run: RunDetail): { phase: "analysis" | "explanation" | "comment"; title: string; detail: string } | null {
+  const analysis = phaseFailure(
+    run.analysis_status,
+    run.analysis_error,
+    unresolvedStageFailure(run, PHASE_STAGES.analysis),
+    "The analysis did not finish.",
+  );
+  if (analysis) return { phase: "analysis", title: "Analysis failed.", detail: analysis };
+  const quickStillFailed =
+    run.explanations.quick?.status === "failed" &&
+    run.explanation_status !== "queued" &&
+    run.explanation_status !== "running"
+      ? run.explanations.quick.error || "Explanation failed."
+      : null;
+  const explanation = phaseFailure(
+    run.explanation_status,
+    run.explanation_error || run.explanations.quick?.error,
+    unresolvedStageFailure(run, PHASE_STAGES.explanation) || quickStillFailed,
+    "The model did not return a validated document.",
+  );
+  if (explanation) return { phase: "explanation", title: "Explanation failed.", detail: explanation };
+  const comment = phaseFailure(
+    run.comment_status,
+    run.comment_error,
+    unresolvedStageFailure(run, PHASE_STAGES.comment),
+    "The comment was not posted.",
+  );
+  if (comment) return { phase: "comment", title: "The pull request comment was not updated.", detail: comment };
+  return null;
+}
+
+function phaseFailure(status: string, error: string | null | undefined, eventDetail: string | null, fallback: string): string | null {
+  if (status === "succeeded" || status === "posted") return null;
+  if (status === "failed") return error || eventDetail || fallback;
+  if (eventDetail) return error || eventDetail;
+  return null;
+}
+
+function unresolvedStageFailure(run: RunDetail, stages: readonly string[]): string | null {
+  let message: string | null = null;
+  let failedIndex = -1;
+  run.events.forEach((event, index) => {
+    if (!stages.includes(event.stage)) return;
+    if (event.status === "failed") {
+      message = event.message || "failed";
+      failedIndex = index;
+    } else if (event.status === "succeeded" || event.status === "posted") {
+      message = null;
+      failedIndex = -1;
+    }
+  });
+  if (message === null || failedIndex < 0) return null;
+  const retried = run.events.slice(failedIndex + 1).some((event) => event.stage === "job_queued");
+  return retried ? null : message;
+}
+
+function ChangeFlowDiagram({ diagram }: { diagram: ChangeFlowDiagram }) {
+  const sections = diagram.sections ?? [];
+  return (
+    <section className="flow" aria-label="Change flow">
+      {sections.length === 0 ? (
+        <p>No changed symbols in the change graph.</p>
+      ) : (
+        <ul className="flow-list">
+          {sections.map((section, sectionIndex) => (
+            <li key={`${section.heading}-${sectionIndex}`}>
+              {section.heading}
+              {section.items.length > 0 ? (
+                <ul>
+                  {section.items.map((item, index) => (
+                    <li key={`${section.heading}-${item.text}-${index}`}>
+                      {item.text}
+                      {item.detail ? (
+                        <ul>
+                          <li className="flow-detail">{item.detail}</li>
+                        </ul>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+type DetailRow = { label: string; value: string; href?: string | null; evidence?: string | null };
+
+function MermaidDiagram({ chart }: { chart: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!chart || !host.current) return;
+    let cancelled = false;
+    const id = `explain-${Math.random().toString(36).slice(2, 10)}`;
+    mermaid
+      .render(id, chart)
+      .then(({ svg }) => {
+        if (!cancelled && host.current) {
+          host.current.innerHTML = svg;
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setError("The diagram could not be drawn.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [chart]);
+
+  return (
+    <section className="diagram" aria-label="Change diagram">
+      {!chart ? (
+        <p>No changed symbols in the change graph.</p>
+      ) : error ? (
+        <p className="error">{error}</p>
+      ) : (
+        <div ref={host} className="mermaid-host" />
+      )}
+    </section>
+  );
+}
+
+const DETAILS_ORDER = [
+  "Change Overview",
+  "High-level areas affected",
+  "Key Changes",
+  "Behavior Changes",
+  "Risk Areas",
+  "What changed",
+  "Change flow",
+  "Impact",
+  "Shared code",
+  "Tests",
+  "Unchanged boundary",
+  "Why a file outside the diff matters",
+  "Unknowns",
+];
+
+const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention"]);
+
+const TABLE_HEADERS: Record<string, [string, string]> = {
+  "High-level areas affected": ["Area", "Names"],
+  "Key Changes": ["Change", "Location"],
+  "Behavior Changes": ["Call", "Evidence"],
+  "Risk Areas": ["Where", "Why look"],
+  "Suggested review areas": ["Area", "Why look"],
+};
+
+function detailsSectionOrder<T extends { title: string }>(sections: T[]): T[] {
+  const rank = new Map(DETAILS_ORDER.map((title, index) => [title, index]));
+  return sections.slice().sort((a, b) => (rank.get(a.title) ?? 100) - (rank.get(b.title) ?? 100));
+}
+
+const WRAP_FIRST_COLUMN = new Set([
+  "High-level areas affected",
+  "Key Changes",
+  "Behavior Changes",
+  "Risk Areas",
+  "What changed",
+  "Impact",
+  "Unchanged boundary",
+  "Why a file outside the diff matters",
+]);
+
+function DetailsView({ run }: { run: RunDetail }) {
+  const sections = detailsSectionOrder(run.details?.sections ?? []).filter(
+    (section) => !HIDDEN_ON_DETAILS.has(section.title),
+  );
   return (
     <section className="narrative">
-      <p>{document.summary}</p>
-      {SECTIONS.map((section) => {
-        const statements = document[section.key];
-        if (!Array.isArray(statements) || statements.length === 0) return null;
-        return (
-          <div key={section.key}>
-            <h2>{section.title}</h2>
-            {(statements as Statement[]).map((statement, index) => (
-              <div className="statement" key={`${section.key}-${index}`}>
-                <span className={`chip epistemic ${statement.epistemic}`}>{statement.epistemic}</span>
-                <div>
-                  <p>{statement.text}</p>
-                  <EvidenceLinks ids={statement.evidence_ids} evidence={evidence} repo={repo} sha={sha} />
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {sections.length === 0 ? (
+        <p className="kicker">none found</p>
+      ) : (
+        sections.map((section) => (
+          <DetailGroup
+            key={section.title}
+            title={section.title}
+            rows={section.rows}
+            wrapFirst={WRAP_FIRST_COLUMN.has(section.title)}
+          />
+        ))
+      )}
     </section>
   );
 }
 
-function ClaimsView({
-  claims,
-  evidence,
-  repo,
-  sha,
-}: {
-  claims: Claim[];
-  evidence: Evidence[];
-  repo: string;
-  sha: string;
-}) {
-  return (
-    <section className="claims">
-      <h2>Claims</h2>
-      {claims.map((claim) => (
-        <article className="claim" key={claim.id}>
-          <header>
-            <span className={`chip epistemic ${claim.epistemic}`}>{claim.epistemic}</span>
-            <span className="kicker">{claim.kind}</span>
-          </header>
-          <p>{claim.text}</p>
-          <EvidenceLinks ids={claim.evidence_ids} evidence={evidence} repo={repo} sha={sha} />
-        </article>
-      ))}
-    </section>
-  );
+function isDetailRow(row: DetailRow | null): row is DetailRow {
+  return Boolean(row && row.label && row.value);
 }
 
-function EvidenceLinks({
-  ids,
-  evidence,
-  repo,
-  sha,
-}: {
-  ids: string[];
-  evidence: Evidence[];
-  repo: string;
-  sha: string;
-}) {
-  const linked = ids
-    .map((id) => evidence.find((item) => item.id === id))
-    .filter((item): item is Evidence => Boolean(item && item.file));
-  if (linked.length === 0) return null;
+function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
+  const visible = rows.filter(isDetailRow);
+  const impact = title === "Impact";
+  const overview = title === "Change Overview";
+  const headers = TABLE_HEADERS[title];
+  const className = ["detail-group", wrapFirst ? "wrap-first" : "", impact ? "impact" : ""].filter(Boolean).join(" ");
   return (
-    <div className="links">
-      {linked.map((item) => (
-        <a key={item.id} href={blobUrl(repo, sha, item)} target="_blank" rel="noreferrer">
-          {label(item)}
-        </a>
-      ))}
+    <div className={className}>
+      <h3>{title}</h3>
+      {visible.length === 0 ? (
+        <p className="kicker">none found</p>
+      ) : overview ? (
+        <OverviewLines rows={visible} />
+      ) : (
+        <>
+          {impact ? (
+            <div className="detail-row detail-columns-head">
+              <span className="detail-label">Area</span>
+              <span>Reason</span>
+              <span>Evidence file</span>
+            </div>
+          ) : headers ? (
+            <div className="detail-row detail-columns-head">
+              <span className="detail-label">{headers[0]}</span>
+              <span>{headers[1]}</span>
+            </div>
+          ) : null}
+          {visible.map((row, index) => (
+            <div className="detail-row" key={`${title}-${row.label}-${row.value}-${index}`}>
+              {impact ? (
+                <ImpactCells row={row} />
+              ) : (
+                <>
+                  <span className="detail-label">{row.label}</span>
+                  {row.href ? (
+                    <a href={row.href} target="_blank" rel="noreferrer">
+                      {row.value}
+                    </a>
+                  ) : (
+                    <span>{row.value}</span>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
+}
+
+function OverviewLines({ rows }: { rows: DetailRow[] }) {
+  const lines = rows.map((row) => row.value.trim()).filter((value) => value && value !== "none found");
+  if (lines.length === 0) return <p className="kicker">none found</p>;
+  if (lines.length === 1) return <p>{lines[0]}</p>;
+  return (
+    <ul className="bullets">
+      {lines.map((line, index) => (
+        <li key={`${index}-${line}`}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
+function ImpactCells({ row }: { row: DetailRow }) {
+  const evidence = row.evidence?.trim() || "";
+  return (
+    <>
+      <span className="detail-label">{row.label}</span>
+      <span>{row.value}</span>
+      {evidence && row.href ? (
+        <a className="detail-evidence" href={row.href} target="_blank" rel="noreferrer">
+          {evidence}
+        </a>
+      ) : (
+        <span className="detail-evidence">{evidence}</span>
+      )}
+    </>
+  );
+}
+
+function ReviewQuestionsView({ run }: { run: RunDetail }) {
+  const attention = sectionRows(run, "Reviewer Attention");
+  const suggested = subsectionRows(run, "Reviewer Attention", "Suggested review areas");
+  const questions = reviewQuestionTexts(run);
+  return (
+    <>
+      <section className="review-panel" aria-label="Reviewer Attention">
+        <h2>Reviewer Attention</h2>
+        {attention.length === 0 ? (
+          <p className="review-empty">none were found</p>
+        ) : (
+          <ul className="review-questions">
+            {attention.map((row, index) => (
+              <li key={`${index}-${row.label}-${row.value}`}>
+                <span className="detail-label">{row.label}</span>
+                {" — "}
+                {row.href ? (
+                  <a href={row.href} target="_blank" rel="noreferrer">
+                    {row.value}
+                  </a>
+                ) : (
+                  row.value
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <DetailGroup title="Suggested review areas" rows={suggested} wrapFirst />
+      </section>
+      <section className="review-panel" aria-label="Review questions">
+        <h2>Review questions</h2>
+        {questions.length === 0 ? (
+          <p className="review-empty">none were found</p>
+        ) : (
+          <ul className="review-questions">
+            {questions.map((question, index) => (
+              <li key={`${index}-${question}`}>{question}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
+function subsectionRows(run: RunDetail, sectionTitle: string, subsectionTitle: string): DetailRow[] {
+  const section = (run.details?.sections ?? []).find((item) => item.title === sectionTitle);
+  const subsection = section?.subsections?.find((item) => item.title === subsectionTitle);
+  if (!subsection) return [];
+  return subsection.rows.filter(isDetailRow).filter((row) => row.value.trim() !== "none found");
+}
+
+function sectionRows(run: RunDetail, title: string): DetailRow[] {
+  const section = (run.details?.sections ?? []).find((item) => item.title === title);
+  if (!section) return [];
+  const seen = new Set<string>();
+  const rows: DetailRow[] = [];
+  for (const row of section.rows) {
+    const value = row.value.trim();
+    if (!row.label || !value || value === "none found" || seen.has(`${row.label}\0${value}`)) continue;
+    seen.add(`${row.label}\0${value}`);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function reviewQuestionTexts(run: RunDetail): string[] {
+  const section = (run.details?.sections ?? []).find((item) => item.title === "Review questions");
+  if (!section) return [];
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (const row of section.rows) {
+    const value = row.value.trim();
+    if (!value || value === "none found" || seen.has(value)) continue;
+    seen.add(value);
+    texts.push(value);
+  }
+  return texts;
 }
 
 function DeltaView({ run }: { run: RunDetail }) {
@@ -281,18 +575,4 @@ function DeltaView({ run }: { run: RunDetail }) {
       ))}
     </section>
   );
-}
-
-function blobUrl(repo: string, sha: string, item: Evidence) {
-  const base = `https://github.com/${repo}/blob/${sha}/${item.file}`;
-  if (item.start_line && item.end_line && item.end_line !== item.start_line) {
-    return `${base}#L${item.start_line}-L${item.end_line}`;
-  }
-  if (item.start_line) return `${base}#L${item.start_line}`;
-  return base;
-}
-
-function label(item: Evidence) {
-  if (item.start_line) return `${item.file}:${item.start_line}`;
-  return item.file || item.id;
 }

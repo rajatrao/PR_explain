@@ -1,1 +1,1 @@
-Explain the change for the developer who will review it. Include the functions, the flow, the direct callers, the tests, and the dependencies that are in the packet. Say which files are absent from the diff and whether unchanged behavior is actually supported.
+Name each changed function, the direct callers and calls stored in the packet, the tests or missing tests, and the file-reason claims. Put functions and calls in change_flow, tests in tests, and absent-file reasons in unchanged. Do not write an architecture overview and do not invent callers.

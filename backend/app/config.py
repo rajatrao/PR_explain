@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./pr_explain.db"
     github_app_id: str | None = None
     github_app_private_key: str | None = None
+    github_app_private_key_file: str | None = None
     github_webhook_secret: str | None = None
     app_base_url: str = ""
     github_api_url: str = "https://api.github.com"

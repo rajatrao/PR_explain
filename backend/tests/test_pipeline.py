@@ -1,14 +1,17 @@
 import uuid
 
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.analyzer.fixture import load_oauth_snapshot
 from app.analyzer.types import FileChange, Snapshot
+from app.api import app
 from app.config import get_settings
 from app.db.models import (
     AnalysisJob,
     AnalysisRun,
     ClaimRow,
+    ExplanationPacketRow,
     GithubInstallation,
     PullRequest,
     Repository,
@@ -82,7 +85,7 @@ def test_explanation_failure_keeps_claims_and_retry_does_not_refetch(db):
     assert any(row.subject == "createSession" and row.kind == "calls" for row in stored.claims) or any(
         "calls createSession" in row.text for row in stored.claims
     )
-    enqueue_job(db, run.id, "explain", "developer")
+    enqueue_job(db, run.id, "explain", "quick")
     db.commit()
     process_available_job(db, settings, snapshot_source=source, provider=failed, comment_client=MemoryComments())
     assert source.calls == 1
@@ -149,11 +152,230 @@ def test_new_sha_replaces_comment_body(db):
     latest = comments.comments[1]
     assert second.head_sha in latest
     assert first.head_sha not in latest
+    assert len(comments.comments) == 1
+    assert "view=explain" in latest
+    assert "view=details" not in latest
+    assert latest.index("## Explain for") < latest.index("## Details for") < latest.index("## Review for")
+    explain_body, rest = latest.split("## Details for", 1)
+    details_body, review_body = rest.split("## Review for", 1)
+    assert "```mermaid" in explain_body
+    assert "```mermaid" not in details_body
+    assert "```mermaid" not in review_body
+    assert "### Impact" in details_body
+    assert "| Area | Reason | Evidence file |" in details_body
+    assert "### Reviewer Attention" not in details_body
+    assert "### Reviewer Attention" in review_body
+    assert "### Review questions" in review_body
+    assert "one-hop" not in latest.lower()
+    assert "insecure" not in latest.lower()
+    assert "score" not in latest.lower()
     assert run_one.id != run_two.id
     delta = run_two.revision.delta
     assert delta is not None
     assert delta.previous_head_sha == first.head_sha
     assert delta.added or delta.removed
+
+
+class _FailOnceSource:
+    def __init__(self, snapshot) -> None:
+        self.snapshot = snapshot
+        self.calls = 0
+
+    def fetch(self, full_name: str, base_sha: str, head_sha: str):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("snapshot fetch failed")
+        self.snapshot.head_sha = head_sha
+        self.snapshot.base_sha = base_sha
+        self.snapshot.repository = full_name
+        return self.snapshot
+
+
+def test_failed_analyze_job_becomes_pending_and_is_picked_up(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    head_sha = snapshot.head_sha
+    revision_id = run.revision_id
+    source = _FailOnceSource(snapshot)
+    settings = get_settings()
+    failed = process_available_job(db, settings, snapshot_source=source, provider=ScriptedProvider())
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.phase == "analyze"
+    assert source.calls == 1
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "failed"
+    assert stored.revision_id == revision_id
+    assert stored.revision.head_sha == head_sha
+
+    client = TestClient(app)
+    response = client.post(f"/api/runs/{run.id}/retry")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(run.id)
+    assert body["analysis_status"] == "queued"
+    assert body["analysis_error"] is None
+    assert body["revision"]["head_sha"] == head_sha
+    assert any(event["stage"] == "snapshot_fetch" and event["status"] == "failed" for event in body["events"])
+
+    db.expire_all()
+    job = db.get(AnalysisJob, failed.id)
+    assert job.status == "pending"
+    assert job.last_error is None
+    assert job.run_id == run.id
+    assert db.scalar(select(func.count()).select_from(Revision)) == 1
+
+    picked = process_available_job(db, settings, snapshot_source=source, provider=ScriptedProvider())
+    assert picked is not None
+    assert picked.id == failed.id
+    assert picked.status == "succeeded"
+    assert source.calls == 2
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "succeeded"
+    assert stored.revision_id == revision_id
+    assert stored.revision.head_sha == head_sha
+    assert db.scalar(select(func.count()).select_from(Revision)) == 1
+    assert _claim_count(db, run.id) > 0
+
+
+def test_explanation_retry_does_not_refetch_snapshot(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    failed = ScriptedProvider(error="connection refused")
+    process_available_job(db, settings, snapshot_source=source, provider=failed)
+    explain_job = process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=failed,
+        comment_client=MemoryComments(),
+    )
+    assert explain_job.phase == "explain"
+    assert source.calls == 1
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "succeeded"
+    assert stored.explanation_status == "failed"
+    claims_before = _claim_count(db, run.id)
+    assert claims_before > 0
+    packet = db.scalars(
+        select(ExplanationPacketRow).where(ExplanationPacketRow.run_id == run.id)
+    ).one()
+    packet_id = packet.id
+    payload = dict(packet.payload)
+
+    client = TestClient(app)
+    response = client.post(f"/api/runs/{run.id}/retry")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["analysis_status"] == "succeeded"
+    assert body["explanation_status"] == "queued"
+    assert body["explanation_error"] is None
+    assert body["revision"]["head_sha"] == snapshot.head_sha
+    assert len(body["claims"]) == claims_before
+    assert any(event["stage"] == "claims_persisted" for event in body["events"])
+
+    db.expire_all()
+    job = db.get(AnalysisJob, explain_job.id)
+    assert job.status == "pending"
+    assert job.last_error is None
+    assert job.phase == "explain"
+    assert (
+        db.scalar(
+            select(func.count())
+            .select_from(AnalysisJob)
+            .where(AnalysisJob.run_id == run.id, AnalysisJob.phase == "explain")
+        )
+        == 1
+    )
+
+    provider = ScriptedProvider()
+    picked = process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=provider,
+        comment_client=MemoryComments(),
+    )
+    assert picked.id == explain_job.id
+    assert picked.status == "succeeded"
+    assert source.calls == 1
+    assert provider.calls >= 1
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "succeeded"
+    assert stored.explanation_status == "succeeded"
+    assert _claim_count(db, run.id) == claims_before
+    same = db.get(ExplanationPacketRow, packet_id)
+    assert same.payload == payload
+    assert db.scalar(select(func.count()).select_from(Revision)) == 1
+
+
+def test_comment_retry_does_not_call_the_provider(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    settings.app_base_url = "http://explain.example"
+    provider = ScriptedProvider()
+    process_available_job(db, settings, snapshot_source=source, provider=provider)
+    process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=provider,
+        comment_client=MemoryComments(fail=True),
+    )
+    calls = provider.calls
+    assert calls >= 1
+    assert source.calls == 1
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.explanation_status == "succeeded"
+    assert stored.comment_status == "failed"
+
+    client = TestClient(app)
+    response = client.post(f"/api/runs/{run.id}/retry")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["explanation_status"] == "succeeded"
+    assert body["comment_status"] == "queued"
+    assert body["comment_error"] is None
+    assert body["depths"] == ["quick", "deep"]
+    assert "developer" not in body["explanations"]
+    assert "architecture" not in body["explanations"]
+    assert body["explanations"]["quick"]["document"]["summary"]
+    assert body["explanations"]["deep"]["document"]["summary"]
+
+    db.expire_all()
+    comment_job = db.scalars(
+        select(AnalysisJob).where(AnalysisJob.run_id == run.id, AnalysisJob.phase == "comment")
+    ).one()
+    assert comment_job.status == "pending"
+    assert comment_job.last_error is None
+
+    comments = MemoryComments()
+    picked = process_available_job(
+        db,
+        settings,
+        snapshot_source=source,
+        provider=provider,
+        comment_client=comments,
+    )
+    assert picked.id == comment_job.id
+    assert picked.status == "succeeded"
+    assert provider.calls == calls
+    assert source.calls == 1
+    db.expire_all()
+    stored = db.get(AnalysisRun, run.id)
+    assert stored.analysis_status == "succeeded"
+    assert stored.explanation_status == "succeeded"
+    assert stored.comment_status == "posted"
+    assert comments.comments
 
 
 def test_unconfigured_provider_fails_explanation_only(db):
@@ -172,3 +394,29 @@ def test_unconfigured_provider_fails_explanation_only(db):
     assert source.calls == 1
     jobs = db.scalars(select(AnalysisJob).where(AnalysisJob.run_id == run.id)).all()
     assert any(job.phase == "explain" and job.status == "succeeded" for job in jobs)
+
+
+def test_queued_run_with_failed_analyze_job_exposes_retry(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    job = db.scalars(select(AnalysisJob).where(AnalysisJob.run_id == run.id)).one()
+    job.status = "failed"
+    job.last_error = "Could not parse the provided public key."
+    db.commit()
+
+    client = TestClient(app)
+    detail = client.get(f"/api/runs/{run.id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["analysis_status"] == "failed"
+    assert "public key" in body["analysis_error"]
+
+    response = client.post(f"/api/runs/{run.id}/retry")
+    assert response.status_code == 200
+    retried = response.json()
+    assert retried["analysis_status"] == "queued"
+    assert retried["analysis_error"] is None
+    db.expire_all()
+    stored = db.get(AnalysisJob, job.id)
+    assert stored.status == "pending"
+    assert stored.last_error is None

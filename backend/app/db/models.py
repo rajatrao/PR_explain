@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -33,6 +34,7 @@ class GithubInstallation(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     account_login: Mapped[str] = mapped_column(String(255))
+    account_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     repositories: Mapped[list[Repository]] = relationship(
         back_populates="installation",
@@ -44,13 +46,14 @@ class Repository(Base):
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    installation_id: Mapped[int] = mapped_column(
+    installation_id: Mapped[int | None] = mapped_column(
         ForeignKey("github_installations.id", ondelete="CASCADE"),
         index=True,
+        nullable=True,
     )
     full_name: Mapped[str] = mapped_column(String(512), index=True)
     default_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    installation: Mapped[GithubInstallation] = relationship(back_populates="repositories")
+    installation: Mapped[GithubInstallation | None] = relationship(back_populates="repositories")
     pull_requests: Mapped[list[PullRequest]] = relationship(
         back_populates="repository",
         cascade="all, delete-orphan",
@@ -152,6 +155,10 @@ class AnalysisRun(Base):
         cascade="all, delete-orphan",
     )
     explanations: Mapped[list[ExplanationRow]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+    )
+    events: Mapped[list[PipelineEvent]] = relationship(
         back_populates="run",
         cascade="all, delete-orphan",
     )
@@ -301,6 +308,30 @@ class ExplanationRow(Base):
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     run: Mapped[AnalysisRun] = relationship(back_populates="explanations")
+
+
+class PipelineEvent(Base):
+    __tablename__ = "pipeline_events"
+    __table_args__ = (Index("ix_pipeline_events_run_ordinal", "run_id", "ordinal"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    delivery_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    head_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stage: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32))
+    message: Mapped[str] = mapped_column(String(240))
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    ordinal: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_now,
+        server_default=func.now(),
+    )
+    run: Mapped[AnalysisRun | None] = relationship(back_populates="events")
 
 
 class RevisionDelta(Base):
