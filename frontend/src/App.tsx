@@ -22,7 +22,6 @@ export function App() {
         <a className="word" href="/">
           PR Explain
         </a>
-        <span className="kicker">Claims stay. Narration is optional.</span>
       </header>
       {match ? <RunPage id={decodeURIComponent(match[1])} /> : <Home />}
     </div>

@@ -8,14 +8,15 @@ from sqlalchemy.orm import Session
 from app.analyzer.analyze import analyze
 from app.analyzer.types import Snapshot
 from app.config import Settings
-from app.db.models import AnalysisRun, ExplanationRow, PipelineEvent, PullRequest
+from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
 from app.explanation.select import build_packet
-from app.explanation.validate import validate_response
+from app.explanation.validate import ValidationResult, validate_response
 from app.analyzer.diagram import build_change_flow
 from app.github.comment import publish_combined_comment, render_combined_comment
+from app.github.patches import fetch_compare_patches
 from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.queue import enqueue_job
 from app.jobs.store import load_result, persist_result, record_delta, save_packet
@@ -137,19 +138,13 @@ def execute_explain(
         validation, result = _generate(provider, packet, depth)
     except (ExplanationCallError, LLMConfigError, OSError, ConnectionError) as exc:
         _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
-        if depth == "quick":
-            _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
         return
     except Exception as exc:
         _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
-        if depth == "quick":
-            _sync_comment(session, run, settings, comment_client, document=None, failure=str(exc))
         return
     if not validation.ok or validation.document is None:
         message = "; ".join(validation.errors) or "explanation failed validation"
         _fail_explanation(session, run, depth, provider, message, validation.raw_text, head_sha, "validation")
-        if depth == "quick":
-            _sync_comment(session, run, settings, comment_client, document=None, failure=message)
         return
     document = _grounded_document(session, run, depth, settings) or validation.document
     _store_explanation(
@@ -192,6 +187,9 @@ def execute_comment(session: Session, run_id: uuid.UUID, settings: Settings, com
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise LookupError(f"run {run_id} was not found")
+    if run.explanation_status != "succeeded":
+        _skip_comment(session, run)
+        return
     row = _explanation_row(session, run.id, "quick")
     document = None
     if row is not None and row.status == "succeeded" and row.document:
@@ -199,8 +197,7 @@ def execute_comment(session: Session, run_id: uuid.UUID, settings: Settings, com
     else:
         document = _grounded_document(session, run, "quick", settings)
     if document is None:
-        failure = run.explanation_error or "Explanation failed for this commit."
-        _sync_comment(session, run, settings, comment_client, document=None, failure=failure)
+        _skip_comment(session, run)
         return
     _sync_comment(session, run, settings, comment_client, document=document, failure=None)
 
@@ -278,11 +275,59 @@ def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
     request = _request(packet, depth, None)
     result = provider.explain(request)
     validation = validate_response(result.content, packet)
-    if validation.ok:
+    if _model_saved(validation):
         return validation, result
+    # An empty statement list cannot be repaired into packet facts. Keep the
+    # deterministic explanation instead of waiting on another empty document.
+    if _statements_missing(validation):
+        kept = _packet_explanation(packet, validation, result.content)
+        if kept is not None:
+            return kept, result
     repair = _request(packet, depth, validation.errors)
     repaired = provider.explain(repair)
-    return validate_response(repaired.content, packet), repaired
+    repaired_validation = validate_response(repaired.content, packet)
+    if _model_saved(repaired_validation):
+        return repaired_validation, repaired
+    kept = _packet_explanation(packet, repaired_validation, repaired.content)
+    if kept is not None:
+        return kept, repaired
+    return repaired_validation, repaired
+
+
+def _model_saved(validation) -> bool:
+    return bool(validation.ok and validation.document is not None and validation.document.statements())
+
+
+def _statements_missing(validation) -> bool:
+    return validation.document is not None and not validation.document.statements()
+
+
+def _packet_explanation(packet: ExplanationPacket, validation, raw_text: str):
+    """Save packet claims when the model document cannot be kept."""
+    composed = compose_document(packet)
+    if not composed.statements():
+        return None
+    checked = validate_response(composed.model_dump_json(), packet)
+    document = composed
+    if checked.ok and checked.document is not None and checked.document.statements():
+        document = checked.document
+    if not document.summary.strip():
+        document.summary = _summary_from_packet(packet, document)
+    return ValidationResult(
+        ok=True,
+        document=document,
+        errors=list(validation.errors),
+        dropped=validation.dropped,
+        raw_text=raw_text,
+    )
+
+
+def _summary_from_packet(packet: ExplanationPacket, document: ExplanationDocument) -> str:
+    bullets = [item.strip() for item in explain_bullets(packet.claims) if item and item.strip()]
+    if bullets:
+        return " ".join(bullets)
+    texts = [statement.text.strip() for statement in document.statements() if statement.text.strip()]
+    return " ".join(texts[:4])
 
 
 def _request(packet: ExplanationPacket, depth: str, errors: list[str] | None) -> ExplainRequest:
@@ -307,7 +352,28 @@ def _fail_explanation(session, run, depth, provider, message, raw, head_sha, err
         head_sha=head_sha,
         detail={"depth": depth, "error_type": error_type},
     )
+    if depth == "quick":
+        _mark_comment_skipped(session, run, head_sha)
     _mark_explanation_failed(session, run, depth, provider, message, raw, model)
+
+
+def _mark_comment_skipped(session, run, head_sha) -> None:
+    """Leave the pull-request comment untouched when explanation did not succeed."""
+    run.comment_status = "skipped"
+    record_event(
+        session,
+        stage="comment",
+        status="skipped",
+        message="Skipped the pull request comment",
+        run_id=run.id,
+        head_sha=head_sha,
+        detail={"reason": "explanation_failed"},
+    )
+
+
+def _skip_comment(session, run) -> None:
+    _mark_comment_skipped(session, run, run.revision.head_sha)
+    session.commit()
 
 
 def _mark_explanation_failed(session, run, depth, provider, message, raw, model=None) -> None:
@@ -397,7 +463,13 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         relationships=stored.relationships,
         document_unknowns=None if failure else _deep_texts(session, run, "unknowns"),
         review_questions=None if failure else _deep_texts(session, run, "review_questions"),
-        trace=_trace_for_comment(session, run),
+        patches=fetch_compare_patches(
+            settings,
+            pull.repository.full_name,
+            revision.base_sha,
+            revision.head_sha,
+            pull.repository.installation_id,
+        ),
     )
     try:
         _publish(comment_client, pull, body)
@@ -449,23 +521,6 @@ def _comment_failure_message(exc: Exception) -> str:
     if "bearer" in lowered or "ghp_" in text or "ghs_" in text:
         return type(exc).__name__
     return text[:2000]
-
-
-def _trace_for_comment(session, run) -> list[dict]:
-    rows = session.scalars(
-        select(PipelineEvent)
-        .where(PipelineEvent.run_id == run.id)
-        .order_by(PipelineEvent.created_at, PipelineEvent.ordinal)
-    ).all()
-    return [
-        {
-            "stage": row.stage,
-            "status": row.status,
-            "message": row.message,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        }
-        for row in rows
-    ]
 
 
 def _deep_texts(session, run, field: str) -> list[str]:

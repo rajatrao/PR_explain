@@ -1,6 +1,8 @@
 from app.explanation.schema import EvidenceRef, ExplanationDocument, Statement
+from app.github.patches import patches_from_compare
 from app.github.comment import (
     RETIRED_DETAILS_NOTE,
+    _clip_preserving_flow,
     details_marker,
     explain_marker,
     legacy_explain_marker,
@@ -114,7 +116,8 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "## Diagram" not in second
     assert "```mermaid" not in details
     assert "```mermaid" not in review
-    assert "### Change Overview" in details
+    assert "### Change Overview" not in details
+    assert "Change Overview" not in details
     assert "| Area | Reason | Evidence file |" in details
     assert "### Unknowns" in details
     assert "### Reviewer Attention" not in details
@@ -165,7 +168,6 @@ class _Claim:
 
 
 _DETAILS_ORDER = [
-    "### Change Overview",
     "### High-level areas affected",
     "### Key Changes",
     "### Behavior Changes",
@@ -195,7 +197,10 @@ def test_combined_comment_reuses_explain_and_retires_details():
         {"heading": "Changed", "items": [{"text": "login", "detail": None}]},
         {"heading": "login", "items": [{"text": "calls createSession", "detail": "src/login.ts:4"}]},
     ]
-    claims = [_Claim("symbol_changed", "login", "login changed in src/login.ts.")]
+    claims = [
+        _Claim("symbol_changed", "login", "login changed in src/login.ts."),
+        _Claim("unknown_boundary", "Unknown", "No dependency facts are in this packet."),
+    ]
     first = _combined(
         document=_document("first"),
         head_sha=OLD,
@@ -204,6 +209,10 @@ def test_combined_comment_reuses_explain_and_retires_details():
         evidence_by_id={},
         claims=claims,
         sections=sections,
+        document_unknowns=[
+            "No database or schema facts are in this packet.",
+            "No external system facts are in this packet.",
+        ],
     )
     explain, rest = first.split("## Details for", 1)
     details, review = rest.split("## Review for", 1)
@@ -212,9 +221,19 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert "### Reviewer Attention" not in details
     assert "What changed" in details
     assert "| Area | Reason | Evidence file |" in details
+    assert "### Change Overview" not in details
+    assert "Change Overview" not in details
     assert "```mermaid" in explain
     assert "### Diagram" not in explain
     assert review.index("### Reviewer Attention") < review.index("### Review questions")
+    assert "No dependency facts are in this packet" in details
+    assert "No database or schema facts are in this packet" in details
+    assert "No external system facts are in this packet" in details
+    assert "No dependency facts are in this packet" not in review
+    assert "No database or schema facts are in this packet" not in review
+    assert "No external system facts are in this packet" not in review
+    assert "**Unknown**" not in review
+    assert "Claims stay. Narration is optional." not in first
     assert "view=details" not in first
 
     assert publish_combined_comment(comments, "acme/app", 7, first, fallback_id=explain_id) == explain_id
@@ -288,58 +307,155 @@ def test_leftover_details_comment_is_deleted_when_the_client_supports_it():
     assert "second bullet" in comments.comments[1]
 
 
-def test_combined_comment_includes_short_trace_and_updates_in_place():
+def test_combined_comment_omits_trace_and_updates_in_place():
     comments = MemoryComments()
-    trace = [
-        {
-            "stage": "webhook_received",
-            "status": "succeeded",
-            "created_at": "2026-10-02T23:01:00+00:00",
-            "message": "Received pull_request webhook",
-            "detail": {"token": "ghp_secret", "body": "do not store this body"},
-        },
-        {
-            "stage": "AGENT_REPORTED",
-            "status": "succeeded",
-            "created_at": "2026-10-02T23:01:01+00:00",
-            "message": "Reported agent dependabot[bot]",
-        },
-    ]
-    first = _combined(head_sha=OLD, run_id="run-old", bullets=["first"], mermaid=None, trace=trace)
-    assert "### Trace" in first
-    assert first.index("## Review for") < first.index("### Trace")
-    assert "webhook received" in first
-    assert "succeeded" in first
-    assert "2026-10-02T23:01:00+00:00" in first
-    assert "Received pull_request webhook" in first
-    assert "AGENT REPORTED" in first
-    assert "dependabot[bot]" in first
-    assert "ghp_secret" not in first
-    assert "do not store this body" not in first
+    first = _combined(head_sha=OLD, run_id="run-old", bullets=["first"], mermaid=None)
+    assert "### Trace" not in first
+    assert "webhook received" not in first.lower()
+    assert "AGENT REPORTED" not in first
+    assert "Received pull_request webhook" not in first
+    assert "dependabot[bot]" not in first
     assert "```" not in first
     assert "view=explain" in first
     assert "view=details" not in first
+    explain, rest = first.split("## Details for", 1)
+    _details, review = rest.split("## Review for", 1)
+    assert "### Reviewer Attention" in review
+    assert "### Review questions" in review
+    assert "trace" not in review.lower()
 
     first_id = publish_combined_comment(comments, "acme/app", 7, first)
-    later = _combined(
-        bullets=["second"],
-        mermaid=None,
-        trace=[
-            *trace,
-            {
-                "stage": "comment",
-                "status": "started",
-                "created_at": "2026-10-02T23:02:00+00:00",
-                "message": "Comment started",
-            },
-        ],
-    )
+    later = _combined(bullets=["second"], mermaid=None)
     second_id = publish_combined_comment(comments, "acme/app", 7, later, fallback_id=first_id)
     assert second_id == first_id
     assert len(comments.comments) == 1
     assert comments._next == first_id + 1
-    assert "Comment started" in comments.comments[first_id]
+    assert "Comment started" not in comments.comments[first_id]
+    assert "### Trace" not in comments.comments[first_id]
     assert OLD not in comments.comments[first_id]
+    assert "second" in comments.comments[first_id]
     assert "## Explain for" in comments.comments[first_id]
     assert "## Details for" in comments.comments[first_id]
     assert "## Review for" in comments.comments[first_id]
+
+
+_LOGIN_PATCH = "@@ -4,3 +4,3 @@\n context\n-return token;\n+return session;\n"
+_SESSION_PATCH = "@@ -1,2 +1,2 @@\n-const old = 1;\n+const next = 1;\n"
+
+
+def test_combined_comment_collapses_each_file_after_what_changed():
+    claims = [
+        _Claim("file_changed", "src/login.ts", "src/login.ts is changed in this pull request."),
+        _Claim("file_changed", "src/session.ts", "src/session.ts is changed in this pull request."),
+    ]
+    body = _combined(
+        claims=claims,
+        patches={"src/login.ts": _LOGIN_PATCH, "src/session.ts": _SESSION_PATCH},
+    )
+    explain, rest = body.split("## Details for", 1)
+    details, review = rest.split("## Review for", 1)
+    assert details.index("### What changed") < details.index("### Changes") < details.index("### Change flow")
+    assert details.count("<details>") == 2
+    assert "<details open" not in body
+    assert "<summary>src/login.ts</summary>" in details
+    assert "<summary>src/session.ts</summary>" in details
+    assert "```diff\n@@ -4,3 +4,3 @@\n context\n-return token;\n+return session;\n```" in details
+    assert "-const old = 1;" in details
+    assert "+const next = 1;" in details
+    assert "lines 4-6" not in details
+    assert "lines 1-2" not in details
+    assert "<details>" not in explain
+    assert "<details>" not in review
+    assert "The rest of this file is on the web run page." not in body
+
+
+def test_change_flow_is_a_list_and_is_not_sliced_mid_item():
+    sections = [
+        {
+            "heading": "Changed",
+            "items": [
+                {"text": "RunPage", "detail": None},
+                {"text": "DetailsView", "detail": None},
+                {"text": "FileChanges", "detail": None},
+            ],
+        },
+        {
+            "heading": "RunPage",
+            "items": [
+                {"text": "calls coverageLabel", "detail": "frontend/src/RunPage.tsx:109"},
+                {"text": "calls failedRunPhase", "detail": "frontend/src/RunPage.tsx:70"},
+            ],
+        },
+    ]
+    body = _combined(
+        sections=sections,
+        patches={"src/big.ts": "@@ -1 +1 @@\n-" + ("x" * 70000) + "\n+y\n"},
+    )
+    assert "### Change flow - **Changed**" not in body
+    details = body.split("## Details for", 1)[1].split("## Review for", 1)[0]
+    assert "</details>\n\n### Change flow\n" in details
+    flow = details.split("### Change flow", 1)[1].split("\n### ", 1)[0]
+    assert flow.startswith("\n\n- **Changed**\n")
+    assert "\n  - RunPage\n" in flow
+    assert "\n  - DetailsView\n" in flow
+    assert "\n  - FileChanges\n" in flow
+    assert "\n- **RunPage**\n" in flow
+    assert "\n  - [calls coverageLabel (frontend/src/RunPage.tsx:109)](" in flow
+    assert "\n  - [calls failedRunPhase (frontend/src/RunPage.tsx:70)](" in flow
+    items = [line for line in flow.splitlines() if line.lstrip().startswith("- ")]
+    assert len(items) >= 6
+    assert all(" - **" not in line for line in items)
+    url = f"https://github.com/acme/app/blob/{NEW}/frontend/src/RunPage.tsx#L109"
+    assert url in flow
+    assert url[:-8] + "…" not in body
+    assert len(body) <= 60000
+    partial = url[:48]
+    clipped = _clip_preserving_flow(flow, flow.index(url) + 12)
+    assert partial not in clipped or url in clipped
+    assert "…" in clipped
+
+
+def test_combined_comment_truncates_large_diffs_and_keeps_paths():
+    claims = [
+        _Claim("file_changed", "src/big.ts", "big changed"),
+        _Claim("file_changed", "src/small.ts", "small changed"),
+    ]
+    body = _combined(
+        claims=claims,
+        patches={
+            "src/big.ts": "@@ -1 +1 @@\n-" + ("x" * 70000) + "\n+y\n",
+            "src/small.ts": "@@ -1 +1 @@\n-old\n+ok\n",
+        },
+    )
+    assert len(body) <= 60000
+    explain, rest = body.split("## Details for", 1)
+    details, review = rest.split("## Review for", 1)
+    assert f"## Explain for `{NEW}`" in body
+    assert f"## Review for `{NEW}`" in body
+    assert "### Reviewer Attention" in review
+    assert "<summary>src/big.ts</summary>" in details
+    assert "<summary>src/small.ts</summary>" in details
+    assert "<details open" not in body
+    assert "The rest of this file is on the web run page." in details
+    assert "+ok" in details
+    assert "x" * 70000 not in body
+    assert "lines 1-2" not in details
+
+
+def test_compare_payload_keeps_added_and_removed_lines():
+    patches = patches_from_compare(
+        {
+            "files": [
+                {
+                    "filename": "frontend/src/RunPage.tsx",
+                    "patch": "@@ -15,6 +15,7 @@\n export function RunPage() {\n-  const [depth, setDepth] = useState(\"developer\");\n+  const [tab, setTab] = useState(\"quick\");\n",
+                },
+                {"filename": "notes.bin", "status": "modified"},
+            ]
+        }
+    )
+    assert patches["frontend/src/RunPage.tsx"].startswith("@@ -15,6 +15,7 @@")
+    assert "-  const [depth, setDepth]" in patches["frontend/src/RunPage.tsx"]
+    assert "+  const [tab, setTab]" in patches["frontend/src/RunPage.tsx"]
+    assert "notes.bin" not in patches
+    assert "lines 15-168" not in patches["frontend/src/RunPage.tsx"]

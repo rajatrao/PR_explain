@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
 _LIMIT = 60000
 
 _DETAILS_TITLES = (
-    "Change Overview",
     "High-level areas affected",
     "Key Changes",
     "Behavior Changes",
@@ -87,15 +87,13 @@ def render_details_comment(
     relationships=None,
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
-    trace: list | None = None,
 ) -> str:
     marker = details_marker(repo_full_name, pr_number)
     heading = f"## Details for `{head_sha}`"
     footer = _footer(app_base_url, run_id)
-    trace_block = render_trace_markdown(trace)
     if failure:
         reason = (failure or "The Details view is not available for this commit.").strip()
-        return _bounded("\n\n".join(part for part in (marker, heading, reason, trace_block, footer) if part))
+        return _bounded("\n\n".join(part for part in (marker, heading, reason, footer) if part))
     details = build_details(
         symbols=symbols or [],
         relationships=relationships or [],
@@ -108,14 +106,14 @@ def render_details_comment(
         review_questions=review_questions,
     )
     details_md = render_details_markdown(details)
-    body = "\n\n".join(part for part in (marker, heading, details_md, trace_block, footer) if part)
+    body = "\n\n".join(part for part in (marker, heading, details_md, footer) if part)
     if len(body) <= _LIMIT:
         return body
-    kept = "\n\n".join(part for part in (marker, heading, trace_block, footer) if part)
+    kept = "\n\n".join(part for part in (marker, heading, footer) if part)
     room = _LIMIT - len(kept) - 2
     if details_md and room > 80:
-        shortened = details_md[: room - 1].rstrip() + "…"
-        return _bounded("\n\n".join(part for part in (marker, heading, shortened, trace_block, footer) if part))
+        shortened = _clip_preserving_flow(details_md, room)
+        return _bounded("\n\n".join(part for part in (marker, heading, shortened, footer) if part))
     return _bounded(kept)
 
 
@@ -139,7 +137,7 @@ def render_combined_comment(
     relationships=None,
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
-    trace: list | None = None,
+    patches: dict[str, str] | None = None,
 ) -> str:
     """One comment: Explain, then Details, then Review. The head SHA is in each heading."""
     del evidence_by_id
@@ -148,8 +146,7 @@ def render_combined_comment(
     details_heading = f"## Details for `{head_sha}`"
     review_heading = f"## Review for `{head_sha}`"
     footer = _footer(app_base_url, run_id)
-    trace_block = render_trace_markdown(trace)
-    tail = [part for part in (trace_block, footer) if part]
+    tail = [footer] if footer else []
     if failure or document is None:
         explain_reason = (failure or "The Explain view is not available for this commit.").strip()
         details_reason = (failure or "The Details view is not available for this commit.").strip()
@@ -186,10 +183,16 @@ def render_combined_comment(
     )
     details_md = _markdown_for(built, _DETAILS_TITLES)
     review_md = _markdown_for(built, _REVIEW_TITLES)
+    changes = build_file_changes(evidence or [], claims or [], patches)
 
     def assemble(flow: list[str], details_text: str, review_text: str) -> str:
         parts = [*explain_parts, *flow, details_heading, details_text, review_heading, review_text, *tail]
         return "\n\n".join(part for part in parts if part)
+
+    if changes:
+        fitted = _fit_file_changes(changes, details_md, review_md, flow_parts, assemble)
+        if fitted is not None:
+            return fitted
 
     body = assemble(flow_parts, details_md, review_md)
     if len(body) <= _LIMIT:
@@ -202,7 +205,68 @@ def render_combined_comment(
     room = _LIMIT - len(head) - len(review_heading) - len(tail_text) - 8
     if room < 120:
         return _bounded(assemble([], "", ""))
-    return _bounded(assemble([], _clip(details_md, room // 2), _clip(review_md, room - room // 2)))
+    return _bounded(
+        assemble([], _clip_preserving_flow(details_md, room // 2), _clip_preserving_flow(review_md, room - room // 2))
+    )
+
+
+def _fit_file_changes(changes, details_md: str, review_md: str, flow: list[str], assemble) -> str | None:
+    """Shrink file diff bodies until the comment fits. Drop a whole file block only when it still does not fit."""
+    limits: dict[str, int] = {}
+    seen: set[tuple[str, int]] = set()
+    for _ in range(len(changes) * 16 + 4):
+        block = render_file_changes_markdown(changes, limits or None)
+        body = assemble(flow, _insert_changes(details_md, block), review_md)
+        if len(body) <= _LIMIT:
+            return body
+        path = _largest_change(changes, limits)
+        if path is None:
+            return None
+        current = limits.get(path, len(file_body(next(item for item in changes if item["path"] == path))))
+        if current <= 1:
+            nxt = 0
+        else:
+            overflow = len(body) - _LIMIT
+            nxt = max(1, current - max(overflow, 64))
+            if nxt >= current:
+                nxt = current - 1
+        mark = (path, nxt)
+        if mark in seen:
+            return None
+        seen.add(mark)
+        limits[path] = nxt
+    return None
+
+
+def _largest_change(changes: list[dict], limits: dict[str, int]) -> str | None:
+    ranked = []
+    for item in changes:
+        size = limits.get(item["path"], len(file_body(item)))
+        if size >= 1:
+            ranked.append((size, item["path"]))
+    if not ranked:
+        return None
+    ranked.sort()
+    return ranked[-1][1]
+
+
+def _insert_changes(details_md: str, changes_md: str) -> str:
+    if not changes_md:
+        return details_md
+    heading = "### What changed"
+    start = details_md.find(heading)
+    if start == -1:
+        return f"{changes_md}\n\n{details_md}" if details_md else changes_md
+    next_heading = details_md.find("\n### ", start + len(heading))
+    if next_heading == -1:
+        return f"{details_md.rstrip()}\n\n{changes_md.rstrip()}\n"
+    # A blank line after </details> ends the HTML block. Without it GitHub
+    # prints the next section, including Change flow, as one line of raw text.
+    return (
+        f"{details_md[:next_heading].rstrip()}\n\n"
+        f"{changes_md.rstrip()}\n\n"
+        f"{details_md[next_heading:].lstrip()}"
+    )
 
 
 def _markdown_for(details: dict, titles: tuple[str, ...]) -> str:
@@ -213,10 +277,64 @@ def _markdown_for(details: dict, titles: tuple[str, ...]) -> str:
     return render_details_markdown({"sections": chosen})
 
 
-def _clip(text: str, room: int) -> str:
-    if room <= 1 or not text or len(text) <= room:
-        return text if room > 1 else ""
-    return text[: room - 1].rstrip() + "…"
+def _clip_preserving_flow(text: str, room: int) -> str:
+    """Shorten text without cutting a Change flow item or a URL in half."""
+    if room <= 1 or not text:
+        return ""
+    if len(text) <= room:
+        return text
+    prefix = _safe_prefix(text, room - 2)
+    if not prefix:
+        return "…"
+    return prefix.rstrip() + "\n…"
+
+
+def _safe_prefix(text: str, room: int) -> str:
+    if room <= 0:
+        return ""
+    prefix = text[:room]
+    prefix = _rewind_change_flow(text, prefix)
+    if len(prefix) < len(text):
+        newline = prefix.rfind("\n")
+        prefix = prefix[:newline] if newline >= 0 else ""
+    return prefix.rstrip()
+
+
+def _rewind_change_flow(text: str, prefix: str) -> str:
+    """If the cut lands inside a Change flow section, keep only whole items."""
+    search = 0
+    while True:
+        start = text.find("### Change flow", search)
+        if start == -1 or start >= len(prefix):
+            return prefix
+        end = _flow_section_end(text, start)
+        if len(prefix) >= end:
+            search = end
+            continue
+        kept = _complete_lines(text[start:end], len(prefix) - start)
+        if not kept.strip():
+            return text[:start]
+        return text[:start] + kept
+
+
+def _flow_section_end(text: str, start: int) -> int:
+    rest = start + len("### Change flow")
+    ends = [text.find(marker, rest) for marker in ("\n### ", "\n## ")]
+    found = [index for index in ends if index != -1]
+    return min(found) if found else len(text)
+
+
+def _complete_lines(section: str, budget: int) -> str:
+    if budget <= 0:
+        return ""
+    kept: list[str] = []
+    used = 0
+    for line in section.splitlines(keepends=True):
+        if used + len(line) > budget:
+            break
+        kept.append(line)
+        used += len(line)
+    return "".join(kept)
 
 
 def upsert_marked_comment(
@@ -356,42 +474,8 @@ def _flow_markdown(text: str) -> str:
     return "\n".join(lines)
 
 
-def render_trace_markdown(events: list | None) -> str:
-    """Stage, status, time, and a short message. Payloads stay out of the comment."""
-    lines = ["### Trace"]
-    for row in events or []:
-        if not isinstance(row, dict):
-            continue
-        stage = _trace_field(row.get("stage")).replace("_", " ") or "stage"
-        shown = " · ".join(
-            part
-            for part in (
-                _trace_field(row.get("status")),
-                _trace_field(row.get("created_at")),
-                _trace_field(row.get("message")),
-            )
-            if part
-        )
-        lines.append(f"- **{stage}** — {shown or 'recorded'}")
-    if len(lines) == 1:
-        return ""
-    return "\n".join(lines)
-
-
-def _trace_field(value: object) -> str:
-    if value is None or isinstance(value, (dict, list)):
-        return ""
-    text = " ".join(str(value).split())
-    lowered = text.lower()
-    if "bearer " in lowered or "ghp_" in text or "ghs_" in text or "github_pat_" in text:
-        return ""
-    return text[:240]
-
-
 def _bounded(body: str) -> str:
-    if len(body) <= _LIMIT:
-        return body
-    return body[: _LIMIT - 1].rstrip() + "…"
+    return _clip_preserving_flow(body, _LIMIT)
 
 
 def _footer(app_base_url: str, run_id: str) -> str:

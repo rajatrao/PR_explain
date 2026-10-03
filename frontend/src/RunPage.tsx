@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
-import type { ChangeFlowDiagram, Epistemic, RunDetail } from "./types";
+import type { ChangeFlowDiagram, Epistemic, FileChange, RunDetail } from "./types";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -27,6 +27,20 @@ const COVERAGE_LABEL: Record<string, string> = {
 
 function coverageLabel(value: string): string {
   return COVERAGE_LABEL[value] ?? `Coverage ${value.replaceAll("_", " ")}`;
+}
+
+function githubTarget(run: RunDetail): { href: string; label: string } | null {
+  const parts = run.revision.repository.split("/");
+  if (parts.length !== 2) return null;
+  const [owner, repo] = parts;
+  const number = run.revision.pr_number;
+  if (!owner || !repo || !number) return null;
+  const href = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pull/${number}`;
+  const commentId = run.comment_status === "posted" ? run.github_comment_id : null;
+  if (commentId) {
+    return { href: `${href}#issuecomment-${commentId}`, label: "GitHub comment" };
+  }
+  return { href, label: "GitHub pull request" };
 }
 
 export function RunPage({ id }: { id: string }) {
@@ -69,6 +83,7 @@ export function RunPage({ id }: { id: string }) {
   const explanation = run.explanations[depth];
   const failedPhase = failedRunPhase(run);
   const viewLabel = TAB_LABEL[depth as TabId] || depth;
+  const github = githubTarget(run);
 
   async function retry() {
     setBusy(true);
@@ -101,6 +116,13 @@ export function RunPage({ id }: { id: string }) {
         {run.revision.repository} #{run.revision.pr_number}
       </p>
       <h1>{run.revision.title || "Pull request"}</h1>
+      {github && (
+        <p className="github-link">
+          <a href={github.href} target="_blank" rel="noreferrer">
+            {github.label}
+          </a>
+        </p>
+      )}
       <p className="sha">{run.revision.head_sha}</p>
       <div className="statuses">
         <span className={`chip ${run.analysis_status}`}>Analysis {run.analysis_status}</span>
@@ -180,7 +202,7 @@ export function RunPage({ id }: { id: string }) {
               </button>
             </section>
           )}
-          <DeltaView run={run} />
+          {tab === "deep" ? <DeltaView run={run} /> : null}
         </div>
       </div>
     </article>
@@ -282,7 +304,12 @@ function ChangeFlowDiagram({ diagram }: { diagram: ChangeFlowDiagram }) {
   );
 }
 
-type DetailRow = { label: string; value: string; href?: string | null; evidence?: string | null };
+type DetailRow = {
+  label: string;
+  value: string;
+  href?: string | null;
+  evidence?: string | null;
+};
 
 function MermaidDiagram({ chart }: { chart: string }) {
   const host = useRef<HTMLDivElement>(null);
@@ -322,7 +349,6 @@ function MermaidDiagram({ chart }: { chart: string }) {
 }
 
 const DETAILS_ORDER = [
-  "Change Overview",
   "High-level areas affected",
   "Key Changes",
   "Behavior Changes",
@@ -344,7 +370,7 @@ const TABLE_HEADERS: Record<string, [string, string]> = {
   "Key Changes": ["Change", "Location"],
   "Behavior Changes": ["Call", "Evidence"],
   "Risk Areas": ["Where", "Why look"],
-  "Suggested review areas": ["Area", "Why look"],
+  "Suggested review areas": ["Where", "Why look"],
 };
 
 function detailsSectionOrder<T extends { title: string }>(sections: T[]): T[] {
@@ -367,21 +393,43 @@ function DetailsView({ run }: { run: RunDetail }) {
   const sections = detailsSectionOrder(run.details?.sections ?? []).filter(
     (section) => !HIDDEN_ON_DETAILS.has(section.title),
   );
+  const changes = run.changes ?? [];
+  const hasWhatChanged = sections.some((section) => section.title === "What changed");
   return (
     <section className="narrative">
-      {sections.length === 0 ? (
+      {sections.length === 0 && changes.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
-        sections.map((section) => (
-          <DetailGroup
-            key={section.title}
-            title={section.title}
-            rows={section.rows}
-            wrapFirst={WRAP_FIRST_COLUMN.has(section.title)}
-          />
-        ))
+        <>
+          {sections.map((section) => (
+            <Fragment key={section.title}>
+              <DetailGroup
+                title={section.title}
+                rows={section.rows}
+                wrapFirst={WRAP_FIRST_COLUMN.has(section.title)}
+              />
+              {section.title === "What changed" ? <FileChanges changes={changes} /> : null}
+            </Fragment>
+          ))}
+          {hasWhatChanged ? null : <FileChanges changes={changes} />}
+        </>
       )}
     </section>
+  );
+}
+
+function FileChanges({ changes }: { changes: FileChange[] }) {
+  if (changes.length === 0) return null;
+  return (
+    <div className="detail-group file-changes">
+      <h3>Changes</h3>
+      {changes.map((file) => (
+        <details className="file-change" key={file.path}>
+          <summary>{file.path}</summary>
+          <pre>{file.diff}</pre>
+        </details>
+      ))}
+    </div>
   );
 }
 
@@ -392,7 +440,6 @@ function isDetailRow(row: DetailRow | null): row is DetailRow {
 function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
   const visible = rows.filter(isDetailRow);
   const impact = title === "Impact";
-  const overview = title === "Change Overview";
   const headers = TABLE_HEADERS[title];
   const className = ["detail-group", wrapFirst ? "wrap-first" : "", impact ? "impact" : ""].filter(Boolean).join(" ");
   return (
@@ -400,8 +447,6 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
       <h3>{title}</h3>
       {visible.length === 0 ? (
         <p className="kicker">none found</p>
-      ) : overview ? (
-        <OverviewLines rows={visible} />
       ) : (
         <>
           {impact ? (
@@ -437,19 +482,6 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
         </>
       )}
     </div>
-  );
-}
-
-function OverviewLines({ rows }: { rows: DetailRow[] }) {
-  const lines = rows.map((row) => row.value.trim()).filter((value) => value && value !== "none found");
-  if (lines.length === 0) return <p className="kicker">none found</p>;
-  if (lines.length === 1) return <p>{lines[0]}</p>;
-  return (
-    <ul className="bullets">
-      {lines.map((line, index) => (
-        <li key={`${index}-${line}`}>{line}</li>
-      ))}
-    </ul>
   );
 }
 
