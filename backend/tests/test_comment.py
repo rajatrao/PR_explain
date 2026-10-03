@@ -118,8 +118,10 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "```mermaid" not in review
     assert "### Change Overview" not in details
     assert "Change Overview" not in details
-    assert "| Area | Reason | Evidence file |" in details
-    assert "### Unknowns" in details
+    assert "### Impact" not in details
+    assert "### Risk Areas" not in details
+    assert "### Unknowns" not in details
+    assert "### Unknowns" not in second
     assert "### Reviewer Attention" not in details
     assert "### Review questions" not in details
     assert "### Reviewer Attention" in review
@@ -171,15 +173,12 @@ _DETAILS_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
     "### Behavior Changes",
-    "### Risk Areas",
     "### What changed",
     "### Change flow",
-    "### Impact",
     "### Shared code",
-    "### Tests",
-    "### Unchanged boundary",
     "### Why a file outside the diff matters",
-    "### Unknowns",
+    "<summary>Tests</summary>",
+    "<summary>Unchanged boundary</summary>",
 ]
 
 
@@ -220,15 +219,18 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert places == sorted(places)
     assert "### Reviewer Attention" not in details
     assert "What changed" in details
-    assert "| Area | Reason | Evidence file |" in details
+    assert "### Impact" not in details
+    assert "### Risk Areas" not in details
     assert "### Change Overview" not in details
     assert "Change Overview" not in details
     assert "```mermaid" in explain
     assert "### Diagram" not in explain
     assert review.index("### Reviewer Attention") < review.index("### Review questions")
-    assert "No dependency facts are in this packet" in details
-    assert "No database or schema facts are in this packet" in details
-    assert "No external system facts are in this packet" in details
+    assert "### Unknowns" not in details
+    assert "### Unknowns" not in first
+    assert "No dependency facts are in this packet" not in details
+    assert "No database or schema facts are in this packet" not in details
+    assert "No external system facts are in this packet" not in details
     assert "No dependency facts are in this packet" not in review
     assert "No database or schema facts are in this packet" not in review
     assert "No external system facts are in this packet" not in review
@@ -355,7 +357,9 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     explain, rest = body.split("## Details for", 1)
     details, review = rest.split("## Review for", 1)
     assert details.index("### What changed") < details.index("### Changes") < details.index("### Change flow")
-    assert details.count("<details>") == 2
+    assert "<summary>Tests</summary>" in details
+    assert "<summary>Unchanged boundary</summary>" in details
+    assert details.count("<details>") == 4
     assert "<details open" not in body
     assert "<summary>src/login.ts</summary>" in details
     assert "<summary>src/session.ts</summary>" in details
@@ -440,6 +444,33 @@ def test_combined_comment_truncates_large_diffs_and_keeps_paths():
     assert "+ok" in details
     assert "x" * 70000 not in body
     assert "lines 1-2" not in details
+
+
+def test_details_comment_collapses_long_sections_and_omits_unknowns():
+    claims = [_Claim("tests", f"fn{i}", f"backend/tests/test_fn{i}.py tests fn{i}.") for i in range(22)]
+    claims.append(_Claim("unknown_boundary", "Unknown", "No dependency facts are in this packet."))
+    claims.append(_Claim("file_changed", "backend/app/llm/provider.py", "backend/app/llm/provider.py is changed in this pull request."))
+    claims.append(_Claim("ambiguous_call", "add", "Call to add at backend/app/llm/provider.py:1 is a member call and was not resolved to a function edge."))
+    claims.append(_Claim("ambiguous_call", "_subject", "Call to _subject at backend/app/explanation/details.py:2 is ambiguous across 2 definitions."))
+    body = _combined(claims=claims, document_unknowns=["No database or schema facts are in this packet."])
+    details = body.split("## Details for", 1)[1].split("## Review for", 1)[0]
+    assert "### Unknowns" not in details
+    assert "No dependency facts are in this packet" not in details
+    assert "No database or schema facts are in this packet" not in details
+    tests = details.split("<summary>Tests</summary>", 1)[1].split("</details>", 1)[0]
+    assert "<details open" not in details
+    assert "more</summary>" not in tests
+    assert "test_fn0.py" in tests
+    assert "test_fn21.py" in tests
+    assert "<summary>Unchanged boundary</summary>" in details
+    impact = details.split("### Impact", 1)[1].split("\n### ", 1)[0]
+    assert "none found" not in impact
+    assert "test_fn0.py" not in impact
+    assert "backend/app/llm/provider.py" in impact
+    assert "<details>" not in impact
+    assert "### Risk Areas" not in details
+    assert "| add |" not in details
+    assert "| _subject |" not in details
 
 
 def test_compare_payload_keeps_added_and_removed_lines():

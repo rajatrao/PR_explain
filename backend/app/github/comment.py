@@ -15,10 +15,9 @@ _DETAILS_TITLES = (
     "Change flow",
     "Impact",
     "Shared code",
+    "Why a file outside the diff matters",
     "Tests",
     "Unchanged boundary",
-    "Why a file outside the diff matters",
-    "Unknowns",
 )
 _REVIEW_TITLES = ("Reviewer Attention", "Review questions")
 RETIRED_DETAILS_NOTE = "This content moved to the Explain comment."

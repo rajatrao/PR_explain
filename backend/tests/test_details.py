@@ -19,10 +19,9 @@ _TITLES = [
     "Change flow",
     "Impact",
     "Shared code",
+    "Why a file outside the diff matters",
     "Tests",
     "Unchanged boundary",
-    "Why a file outside the diff matters",
-    "Unknowns",
     "Reviewer Attention",
     "Review questions",
 ]
@@ -36,10 +35,9 @@ _COMMENT_ORDER = [
     "### Change flow",
     "### Impact",
     "### Shared code",
-    "### Tests",
-    "### Unchanged boundary",
     "### Why a file outside the diff matters",
-    "### Unknowns",
+    "<summary>Tests</summary>",
+    "<summary>Unchanged boundary</summary>",
     "### Reviewer Attention",
     "### Review questions",
 ]
@@ -61,22 +59,24 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     rows = {section["title"]: section["rows"] for section in details["sections"]}
 
     impact = {row["label"]: row["value"] for row in rows["Impact"]}
-    assert impact["Database"] == "none found"
-    assert impact["Frontend"] == "none found"
-    assert impact["Backend"] == "none found"
-    assert impact["Configuration"] == "none found"
-    assert any(row["label"] == "createSession" and "API" in row["value"] or "exported" in row["value"] for row in rows["Impact"])
+    for empty_area in ("Database", "Frontend", "Backend", "Configuration", "Tests"):
+        assert empty_area not in impact or impact[empty_area] != "none found"
+    assert all(row["value"] != "none found" for row in rows["Impact"])
+    assert any(row["label"] == "createSession" and ("API" in row["value"] or "exported" in row["value"]) for row in rows["Impact"])
     linked = [row for row in rows["Impact"] if row.get("href")]
     assert linked
     for row in linked:
         assert row.get("evidence")
         assert row["evidence"] != row["value"]
         assert row["evidence"].split(":")[0] in row["href"]
-    gaps = [row for row in rows["Impact"] if row["value"] == "none found"]
-    assert gaps
-    assert all(not row.get("evidence") for row in gaps)
+    impact_blob = " ".join(
+        f"{row.get('label', '')} {row.get('value', '')} {row.get('evidence', '')}" for row in rows["Impact"]
+    )
+    assert "login.test.ts" not in impact_blob
+    assert "oauth.test.ts" not in impact_blob
 
     assert "Change Overview" not in rows
+    assert "Unknowns" not in rows
 
     areas = {row["label"]: row["value"] for row in rows["High-level areas affected"]}
     assert "API" in areas
@@ -188,11 +188,12 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "[is changed" not in impact_md
     assert "### What changed" in details
     assert "createSession" in body
-    detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("### Unknowns") + 1]
+    detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]
     places = [details.index(title) for title in detail_titles]
     assert places == sorted(places)
     assert "### Change Overview" not in details
     assert "Change Overview" not in details
+    assert "### Unknowns" not in details
     assert "| Area | Names |" in details
     assert "| Change | Location |" in details
     assert "| Call | Evidence |" in details
@@ -321,7 +322,8 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
         "No external system facts are in this packet",
     ):
         assert unknown_text not in [row["value"] for row in rows["Reviewer Attention"]]
-        assert any(row["value"] == unknown_text for row in rows["Unknowns"])
+        assert "Unknowns" not in rows
+        assert unknown_text not in [row["value"] for section in rows.values() for row in section]
     assert not any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"])
     assert all(row["label"] != "Database" for row in rows["Reviewer Attention"])
     suggested_rows = _suggested(details)["rows"]
@@ -382,3 +384,142 @@ def test_change_overview_is_absent():
     )
     assert "Change Overview" not in [section["title"] for section in files_only["sections"]]
     assert "Change Overview" not in render_details_markdown(files_only)
+
+
+def test_impact_skips_test_files_risk_is_deduped_and_long_sections_collapse():
+    symbols = [
+        _Symbol("explain", "backend/app/llm/provider.py"),
+        _Symbol("create_llm_provider", "backend/app/llm/provider.py"),
+        _Symbol("add", "backend/app/llm/provider.py"),
+        _Symbol("_symbol_id", "backend/app/explanation/details.py"),
+        _Symbol("_configured", "backend/app/llm/provider.py"),
+    ]
+    claims = [
+        _Claim("file_changed", "backend/app/llm/provider.py", "backend/app/llm/provider.py is changed in this pull request."),
+        _Claim("defines_api", "create_llm_provider", "create_llm_provider is an exported API in backend/app/llm/provider.py."),
+        _Claim("tests", "create_llm_provider", "backend/tests/test_provider.py tests create_llm_provider."),
+        _Claim("tests", "run", "pkg/run_test.py tests run."),
+        _Claim("tests", "goRun", "service_test.go tests goRun."),
+        _Claim("tests", "javaRun", "AppTest.java tests javaRun."),
+        _Claim("tests", "javaRuns", "AppTests.java tests javaRuns."),
+        _Claim("tests", "ui", "src/ui.test.tsx tests ui."),
+        _Claim("tests", "uiSpec", "src/ui.spec.ts tests uiSpec."),
+        _Claim("file_changed", "backend/tests/test_provider.py", "backend/tests/test_provider.py is changed in this pull request."),
+        _Claim("missing_test", "explain", "No test references explain."),
+        _Claim("missing_test", "create_llm_provider", "No test references create_llm_provider."),
+        _Claim("missing_test", "add", "No test references add."),
+        _Claim("missing_test", "_symbol_id", "No test references _symbol_id."),
+        _Claim("missing_test", "_text", "No test references _text."),
+        _Claim("missing_test", "_subject", "No test references _subject."),
+        _Claim("missing_test", "__init__", "No test references __init__."),
+        _Claim("missing_test", "_configured", "No test references _configured."),
+        _Claim("ambiguous_call", "explain", "Call to explain at backend/app/llm/provider.py:1 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "explain", "Call to explain at backend/app/llm/provider.py:8 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "add", "Call to add at backend/app/llm/provider.py:2 is a member call and was not resolved to a function edge."),
+        _Claim("ambiguous_call", "add", "Call to add at backend/app/llm/provider.py:3 is a member call and was not resolved to a function edge."),
+        _Claim("ambiguous_call", "_symbol_id", "Call to _symbol_id at backend/app/explanation/details.py:1 is ambiguous across 3 definitions."),
+        _Claim("ambiguous_call", "_text", "Call to _text at backend/app/analyzer/parse.py:1 is ambiguous across 3 definitions."),
+        _Claim("ambiguous_call", "_subject", "Call to _subject at backend/app/explanation/details.py:2 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "__repr__", "Call to __repr__ at backend/app/llm/provider.py:4 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "_kind", "Call to _kind at backend/app/explanation/details.py:10 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "_kind", "Call to _kind at backend/app/explanation/details.py:11 is ambiguous across 2 definitions."),
+        _Claim("ambiguous_call", "list_comments", "Call to list_comments at backend/app/github/comment.py:1 is ambiguous across 3 definitions."),
+        _Claim("ambiguous_call", "list_comments", "Call to list_comments at backend/app/github/comment.py:1 is ambiguous across 3 definitions."),
+        _Claim("ambiguous_call", "list_comments", "Call to list_comments at backend/app/github/comment.py:9 is ambiguous across 3 definitions."),
+        _Claim(
+            "file_reason",
+            "backend/app/worker.py",
+            "backend/app/worker.py is not in the diff and matters because run calls create_llm_provider.",
+        ),
+        _Claim(
+            "file_reason",
+            "backend/app/worker.py",
+            "backend/app/worker.py also shows up for another reason.",
+        ),
+        _Claim("unknown_boundary", "Unknown", "No dependency facts are in this packet."),
+    ]
+    claims += [
+        _Claim("file_changed", f"backend/app/extra{i}.py", f"backend/app/extra{i}.py is changed in this pull request.")
+        for i in range(22)
+    ]
+    claims += [
+        _Claim("tests", f"fn{i}", f"backend/tests/test_fn{i}.py tests fn{i}.")
+        for i in range(22)
+    ]
+    details = build_details(
+        symbols=symbols,
+        relationships=[],
+        evidences=[],
+        claims=claims,
+        sections=[],
+        repo="acme/app",
+        sha="a" * 40,
+        document_unknowns=["No database or schema facts are in this packet."],
+    )
+    rows = {section["title"]: section["rows"] for section in details["sections"]}
+    assert "Unknowns" not in rows
+    assert "Change Overview" not in rows
+
+    impact_blob = " ".join(
+        f"{row.get('label', '')} {row.get('value', '')} {row.get('evidence', '')}" for row in rows["Impact"]
+    )
+    assert "backend/app/llm/provider.py" in impact_blob
+    assert "backend/app/extra0.py" in impact_blob
+    for banned in (
+        "test_provider.py",
+        "run_test.py",
+        "service_test.go",
+        "AppTest.java",
+        "AppTests.java",
+        "ui.test.tsx",
+        "ui.spec.ts",
+        "test_fn0.py",
+    ):
+        assert banned not in impact_blob
+
+    risk = rows["Risk Areas"]
+    risk_labels = [row["label"] for row in risk]
+    for banned in (
+        "add",
+        "_symbol_id",
+        "_text",
+        "_subject",
+        "__init__",
+        "__repr__",
+        "_kind",
+        "list_comments",
+        "push",
+        "statements",
+        "upgrade",
+        "main",
+    ):
+        assert banned not in risk_labels
+    assert risk_labels.count("explain") == 1
+    assert risk_labels.count("create_llm_provider") == 1
+    assert risk_labels.count("backend/app/worker.py") == 1
+    assert risk_labels.count("_configured") == 1
+    assert all(row["value"] != "none found" for row in risk)
+    explain = next(row for row in risk if row["label"] == "explain")
+    assert explain["value"] == "no test reference is stored"
+    worker = next(row for row in risk if row["label"] == "backend/app/worker.py")
+    assert "not in the diff" in worker["value"]
+    assert "another reason" not in worker["value"]
+
+    assert len(rows["Tests"]) > 20
+    markdown = render_details_markdown(details)
+    assert "### Unknowns" not in markdown
+    assert "No dependency facts are in this packet" not in markdown
+    assert "No database or schema facts are in this packet" not in markdown
+    tests_md = markdown.split("<summary>Tests</summary>", 1)[1].split("</details>", 1)[0]
+    assert "more</summary>" not in tests_md
+    assert "<details open" not in markdown
+    assert "test_fn0.py" in tests_md
+    assert f"test_fn{len(rows['Tests']) - 1}.py" in tests_md or "fn21" in tests_md
+    boundary_md = markdown.split("<summary>Unchanged boundary</summary>", 1)[1].split("</details>", 1)[0]
+    assert boundary_md.strip()
+    impact_md = markdown.split("### Impact", 1)[1].split("\n### ", 1)[0]
+    assert "<summary>" in impact_md
+    assert "<details open" not in impact_md
+    assert "test_provider.py" not in impact_md
+    shared_md = markdown.split("### Shared code", 1)[1].split("<details>", 1)[0]
+    assert "<details>" not in shared_md
