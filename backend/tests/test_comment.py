@@ -137,9 +137,9 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "### Reviewer Attention" not in details
     assert "### Review questions" not in details
     assert "### Reviewer Attention" in review
-    assert "#### Suggested review areas" in review
+    assert "Suggested review areas" not in review
     assert "### Review questions" in review
-    assert review.index("### Reviewer Attention") < review.index("#### Suggested review areas") < review.index("### Review questions")
+    assert review.index("### Reviewer Attention") < review.index("### Review questions")
     assert "login calls createSession" not in second
     assert "**FACT**" not in second
     assert "Architecture" not in second
