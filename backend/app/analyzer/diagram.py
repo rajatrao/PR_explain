@@ -14,14 +14,15 @@ import re
 from collections import Counter
 
 from app.analyzer.parse import is_dunder_name, is_package_marker, is_test_path
+from app.explanation.explain_view import detail_is_test_path, explain_skip_symbol, text_mentions_test_path
 
 
-def build_change_flow(symbols, relationships, evidences=None) -> dict:
-    sections = _sections(symbols, relationships, evidences or [])
+def build_change_flow(symbols, relationships, evidences=None, *, for_explain: bool = False) -> dict:
+    sections = _sections(symbols, relationships, evidences or [], for_explain=for_explain)
     return {
         "sections": sections,
         "text": render_change_flow(sections),
-        "mermaid": render_mermaid(symbols, relationships),
+        "mermaid": render_mermaid(symbols, relationships, for_explain=for_explain),
     }
 
 
@@ -38,7 +39,7 @@ def render_change_flow(sections) -> str:
     return "\n\n".join(blocks)
 
 
-def render_mermaid(symbols, relationships) -> str:
+def render_mermaid(symbols, relationships, *, for_explain: bool = False) -> str:
     """Flowchart of changed functions and the stored edges that touch them.
 
     A changed function is a node even when it has no stored call. A calls
@@ -46,7 +47,7 @@ def render_mermaid(symbols, relationships) -> str:
     imports arrow is an IMPORTS row whose target is a changed function.
     Other rows are omitted. Nothing is inferred.
     """
-    changed = _changed_functions(symbols)
+    changed = _changed_functions(symbols, for_explain=for_explain)
     if not changed:
         return ""
     by_id = {}
@@ -63,7 +64,10 @@ def render_mermaid(symbols, relationships) -> str:
         kind = getattr(symbol, "kind", None) if symbol is not None else None
         file_path = getattr(symbol, "file_path", None) if symbol is not None else None
         name = getattr(symbol, "name", None) if symbol is not None else None
-        if is_dunder_name(name) or is_dunder_name(fallback_name):
+        if for_explain:
+            if explain_skip_symbol(name, file_path) or explain_skip_symbol(fallback_name, fallback_file):
+                return
+        elif is_dunder_name(name) or is_dunder_name(fallback_name):
             return
         if kind == "file":
             label = file_path or fallback_file or fallback_name or node_id
@@ -90,7 +94,15 @@ def render_mermaid(symbols, relationships) -> str:
     for rel in relationships:
         if _hidden_file(getattr(rel, "source_file", None)) or _hidden_file(getattr(rel, "target_file", None)):
             continue
-        if _hidden_name(getattr(rel, "source_name", None)) or _hidden_name(getattr(rel, "target_name", None)):
+        if _hidden_name(
+            getattr(rel, "source_name", None),
+            file_path=getattr(rel, "source_file", None),
+            for_explain=for_explain,
+        ) or _hidden_name(
+            getattr(rel, "target_name", None),
+            file_path=getattr(rel, "target_file", None),
+            for_explain=for_explain,
+        ):
             continue
         rel_type = getattr(rel, "type", None)
         source = _rel_end(rel, "source")
@@ -114,6 +126,8 @@ def render_mermaid(symbols, relationships) -> str:
             continue
         add_node(source, by_id.get(source), getattr(rel, "source_name", None), getattr(rel, "source_file", None))
         add_node(target, by_id.get(target), getattr(rel, "target_name", None), getattr(rel, "target_file", None))
+        if source not in nodes or target not in nodes:
+            continue
         key = (source, target, arrow)
         if key in seen:
             continue
@@ -180,8 +194,8 @@ def _mermaid_text(label: str) -> str:
     )
 
 
-def _sections(symbols, relationships, evidences) -> list[dict]:
-    changed = _changed_functions(symbols)
+def _sections(symbols, relationships, evidences, *, for_explain: bool = False) -> list[dict]:
+    changed = _changed_functions(symbols, for_explain=for_explain)
     if not changed:
         return []
     changed_ids = {_symbol_id(symbol) for symbol in changed}
@@ -191,7 +205,7 @@ def _sections(symbols, relationships, evidences) -> list[dict]:
         if getattr(symbol, "changed", False) and getattr(symbol, "file_path", None)
     }
     evidence_by_id = _evidence_map(evidences)
-    calls = _call_edges(relationships, changed_ids, changed_files, evidence_by_id)
+    calls = _call_edges(relationships, changed_ids, changed_files, evidence_by_id, for_explain=for_explain)
 
     sections = [
         {
@@ -210,23 +224,28 @@ def _sections(symbols, relationships, evidences) -> list[dict]:
         ]
         items: list[dict] = []
         for edge in sorted(outgoing, key=lambda item: (item["target_name"], item["detail"] or "", item["source_name"])):
-            items.append({"text": f"calls {edge['target_name']}", "detail": edge["detail"]})
+            item = {"text": f"calls {edge['target_name']}", "detail": edge["detail"]}
+            if not _explain_flow_item(item, for_explain=for_explain):
+                items.append(item)
         for edge in sorted(incoming, key=lambda item: (item["caller"], item["detail"] or "")):
-            items.append({"text": f"{edge['caller']} calls {symbol.name}", "detail": edge["detail"]})
+            item = {"text": f"{edge['caller']} calls {symbol.name}", "detail": edge["detail"]}
+            if not _explain_flow_item(item, for_explain=for_explain):
+                items.append(item)
         if not items:
             items.append({"text": "no direct call found", "detail": None})
         sections.append({"heading": symbol.name, "items": items})
         for edge in calls:
             if edge["target"] == symbol_id and edge["source"] not in changed_ids and not edge["in_diff"]:
-                outside.append(
-                    {
-                        "text": f"{edge['caller']} calls {symbol.name}",
-                        "detail": edge["detail"],
-                    }
-                )
+                item = {
+                    "text": f"{edge['caller']} calls {symbol.name}",
+                    "detail": edge["detail"],
+                }
+                if not _explain_flow_item(item, for_explain=for_explain):
+                    outside.append(item)
     if outside:
         sections.append({"heading": "Reached from outside this diff", "items": _dedupe_items(outside)})
-    sections.append({"heading": "Tests", "items": _test_items(relationships, changed_ids, evidence_by_id)})
+    if not for_explain:
+        sections.append({"heading": "Tests", "items": _test_items(relationships, changed_ids, evidence_by_id)})
     return sections
 
 
@@ -234,16 +253,20 @@ def _hidden_file(path: str | None) -> bool:
     return bool(path) and (is_test_path(path) or is_package_marker(path))
 
 
-def _hidden_name(name: str | None) -> bool:
+def _hidden_name(name: str | None, *, file_path: str | None = None, for_explain: bool = False) -> bool:
+    if for_explain:
+        return explain_skip_symbol(name, file_path)
     return is_dunder_name(name)
 
 
-def _changed_functions(symbols) -> list:
+def _changed_functions(symbols, *, for_explain: bool = False) -> list:
     rows = []
     for symbol in symbols:
         if getattr(symbol, "kind", None) != "function" or not getattr(symbol, "changed", False):
             continue
-        if _hidden_file(getattr(symbol, "file_path", None)) or _hidden_name(getattr(symbol, "name", None)):
+        file_path = getattr(symbol, "file_path", None)
+        name = getattr(symbol, "name", None)
+        if _hidden_file(file_path) or _hidden_name(name, file_path=file_path, for_explain=for_explain):
             continue
         if not _symbol_id(symbol):
             continue
@@ -259,15 +282,32 @@ def _changed_functions(symbols) -> list:
     return rows
 
 
-def _call_edges(relationships, changed_ids: set[str], changed_files: set[str], evidence_by_id: dict) -> list[dict]:
+def _call_edges(
+    relationships,
+    changed_ids: set[str],
+    changed_files: set[str],
+    evidence_by_id: dict,
+    *,
+    for_explain: bool = False,
+) -> list[dict]:
     edges = []
     seen: set[tuple] = set()
     for rel in relationships:
         if getattr(rel, "type", None) != "CALLS":
             continue
-        if _hidden_file(getattr(rel, "source_file", None)) or _hidden_file(getattr(rel, "target_file", None)):
+        source_file = getattr(rel, "source_file", None)
+        target_file = getattr(rel, "target_file", None)
+        if _hidden_file(source_file) or _hidden_file(target_file):
             continue
-        if _hidden_name(getattr(rel, "source_name", None)) or _hidden_name(getattr(rel, "target_name", None)):
+        if _hidden_name(
+            getattr(rel, "source_name", None),
+            file_path=source_file,
+            for_explain=for_explain,
+        ) or _hidden_name(
+            getattr(rel, "target_name", None),
+            file_path=target_file,
+            for_explain=for_explain,
+        ):
             continue
         source = _rel_end(rel, "source")
         target = _rel_end(rel, "target")
@@ -281,7 +321,6 @@ def _call_edges(relationships, changed_ids: set[str], changed_files: set[str], e
         if key in seen:
             continue
         seen.add(key)
-        source_file = getattr(rel, "source_file", None)
         edges.append(
             {
                 "source": source,
@@ -317,6 +356,21 @@ def _test_items(relationships, changed_ids: set[str], evidence_by_id: dict) -> l
         return [{"text": "none found for these symbols", "detail": None}]
     items.sort(key=lambda item: (item["text"], item["detail"] or "", item["target"]))
     return [{"text": item["text"], "detail": item["detail"]} for item in items]
+
+
+def _explain_flow_item(item: dict, *, for_explain: bool) -> bool:
+    """True when an Explain change-flow line should be left out."""
+    if not for_explain:
+        return False
+    text = item.get("text") or ""
+    detail = item.get("detail") or ""
+    if detail_is_test_path(detail) or text_mentions_test_path(text) or text_mentions_test_path(detail):
+        return True
+    path = detail.split(":", 1)[0] if detail else None
+    for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text):
+        if explain_skip_symbol(name, path):
+            return True
+    return False
 
 
 def _dedupe_items(items: list[dict]) -> list[dict]:

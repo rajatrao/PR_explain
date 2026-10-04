@@ -96,6 +96,7 @@ def test_two_calls_and_one_outside_caller_render_story_headings():
         stripped = line.strip()
         if stripped.startswith("calls "):
             assert ":" not in stripped
+    explain_story = build_change_flow(symbols, relationships, evidences, for_explain=True)
     body = render_pull_request_comment(
         document=ExplanationDocument(summary="Widget changed."),
         failure=None,
@@ -105,7 +106,7 @@ def test_two_calls_and_one_outside_caller_render_story_headings():
         app_base_url="http://localhost:5173",
         run_id="run",
         evidence_by_id={},
-        change_flow=text,
+        change_flow=explain_story["text"],
     )
     assert "Widget changed." in body
     assert "### Change flow" in body
@@ -115,8 +116,8 @@ def test_two_calls_and_one_outside_caller_render_story_headings():
     assert "    - src/widget.ts:3" in flow
     assert "```\nChanged" not in body
     assert "Reached from outside this diff" in body
-    assert "Tests" in body
-    assert "none found for these symbols" in body
+    assert "Tests" not in flow
+    assert "none found for these symbols" not in body
     assert "one-hop" not in body.lower()
 
 
@@ -135,7 +136,7 @@ def test_explain_comment_mermaid_names_changed_symbols_without_invented_edges():
         _rel("IMPORTS", "sym_other", "src/other.ts", "src/other.ts", "sym_widget", "Widget", "src/widget.ts", None),
         _rel("TESTS", "sym_test", "src/other.test.ts", "src/other.test.ts", "sym_alpha", "alpha", "src/widget.ts", "ev_test"),
     ]
-    story = build_change_flow(symbols, relationships, [])
+    story = build_change_flow(symbols, relationships, [], for_explain=True)
     body = render_pull_request_comment(
         document=ExplanationDocument(summary="Widget changed."),
         failure=None,
