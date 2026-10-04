@@ -21,6 +21,8 @@ from app.db.models import AnalysisRun, PipelineEvent, PullRequest, Revision, Rev
 from app.db.session import get_db
 from app.explanation.changes import build_file_changes
 from app.github.patches import fetch_compare_patches
+from app.explanation.behavioral_changes import build_behavioral_changes
+from app.explanation.system_impact import build_system_impact_rows
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.select import build_packet
@@ -393,6 +395,16 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             )
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
+        "behavioral_changes": build_behavioral_changes(
+            symbols=run.symbols,
+            relationships=run.relationships_,
+            claims=run.claims,
+        ),
+        "system_impact": build_system_impact_rows(
+            symbols=run.symbols,
+            relationships=run.relationships_,
+            claims=run.claims,
+        ),
         "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
         "details": build_details(
             symbols=run.symbols,

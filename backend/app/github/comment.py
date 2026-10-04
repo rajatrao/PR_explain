@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
+from app.explanation.behavioral_changes import build_behavioral_changes, render_behavioral_changes_markdown
+from app.explanation.system_impact import build_system_impact_rows, render_system_impact_markdown
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
@@ -9,11 +11,9 @@ _LIMIT = 60000
 _DETAILS_TITLES = (
     "High-level areas affected",
     "Key Changes",
-    "Behavior Changes",
     "Risk Areas",
     "What changed",
     "Change flow",
-    "Impact",
     "Shared code",
     "Why a file outside the diff matters",
     "Tests",
@@ -48,6 +48,9 @@ def render_pull_request_comment(
     change_flow: str | None = None,
     bullets: list[str] | None = None,
     mermaid: str | None = None,
+    claims=None,
+    symbols=None,
+    relationships=None,
 ) -> str:
     marker = explain_marker(repo_full_name, pr_number)
     heading = f"## Explain for `{head_sha}`"
@@ -55,9 +58,12 @@ def render_pull_request_comment(
     if failure or document is None:
         return _failure_body(marker, heading, failure, footer, "The Explain view is not available for this commit.")
     story = _bullet_block(bullets) or document.summary.strip()
-    parts = [marker, heading, story, ""]
+    parts = [marker, heading, ""]
     _append_mermaid(parts, mermaid)
-    _append_change_flow(parts, change_flow)
+    _append_behavioral_changes(parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_system_impact(parts, symbols=symbols, relationships=relationships, claims=claims)
+    if story:
+        parts.append(story)
     parts.append(footer)
     body = "\n\n".join(part for part in parts if part is not None)
     if len(body) <= _LIMIT:
@@ -165,10 +171,13 @@ def render_combined_comment(
             )
         )
     story = _bullet_block(bullets) or document.summary.strip()
-    explain_parts = [marker, explain_heading, story]
+    explain_parts = [marker, explain_heading, ""]
     _append_mermaid(explain_parts, mermaid)
     flow_parts: list[str] = []
-    _append_change_flow(flow_parts, change_flow)
+    _append_behavioral_changes(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_system_impact(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
+    if story:
+        flow_parts.append(story)
     built = build_details(
         symbols=symbols or [],
         relationships=relationships or [],
@@ -454,6 +463,16 @@ def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
     if not text:
         return
     parts.append("### Change flow\n\n" + _flow_markdown(text))
+
+
+def _append_behavioral_changes(parts: list[str], *, symbols, relationships, claims) -> None:
+    rows = build_behavioral_changes(symbols=symbols or [], relationships=relationships or [], claims=claims or [])
+    parts.append(render_behavioral_changes_markdown(rows))
+
+
+def _append_system_impact(parts: list[str], *, symbols, relationships, claims) -> None:
+    rows = build_system_impact_rows(symbols=symbols or [], relationships=relationships or [], claims=claims or [])
+    parts.append(render_system_impact_markdown(rows))
 
 
 def _flow_markdown(text: str) -> str:

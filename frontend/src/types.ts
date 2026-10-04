@@ -139,6 +139,16 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
+  behavioral_changes?: {
+    label: string;
+    value: string;
+    href?: string | null;
+  }[];
+  system_impact?: {
+    label: string;
+    value: string;
+    href?: string | null;
+  }[];
   changes?: FileChange[];
   details?: {
     sections: {
