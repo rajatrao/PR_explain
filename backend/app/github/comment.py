@@ -51,6 +51,7 @@ def render_pull_request_comment(
     claims=None,
     symbols=None,
     relationships=None,
+    patches: dict[str, str] | None = None,
 ) -> str:
     marker = explain_marker(repo_full_name, pr_number)
     heading = f"## Explain for `{head_sha}`"
@@ -60,8 +61,8 @@ def render_pull_request_comment(
     story = _bullet_block(bullets) or document.summary.strip()
     parts = [marker, heading, ""]
     _append_mermaid(parts, mermaid)
-    _append_behavioral_changes(parts, symbols=symbols, relationships=relationships, claims=claims)
-    _append_system_impact(parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_behavioral_changes(parts, symbols=symbols, relationships=relationships, claims=claims, patches=patches)
+    _append_system_impact(parts, symbols=symbols, relationships=relationships, claims=claims, patches=patches)
     if story:
         parts.append(story)
     parts.append(footer)
@@ -174,8 +175,8 @@ def render_combined_comment(
     explain_parts = [marker, explain_heading, ""]
     _append_mermaid(explain_parts, mermaid)
     flow_parts: list[str] = []
-    _append_behavioral_changes(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
-    _append_system_impact(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_behavioral_changes(flow_parts, symbols=symbols, relationships=relationships, claims=claims, patches=patches)
+    _append_system_impact(flow_parts, symbols=symbols, relationships=relationships, claims=claims, patches=patches)
     if story:
         flow_parts.append(story)
     built = build_details(
@@ -465,13 +466,23 @@ def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
     parts.append("### Change flow\n\n" + _flow_markdown(text))
 
 
-def _append_behavioral_changes(parts: list[str], *, symbols, relationships, claims) -> None:
-    rows = build_behavioral_changes(symbols=symbols or [], relationships=relationships or [], claims=claims or [])
+def _append_behavioral_changes(parts: list[str], *, symbols, relationships, claims, patches=None) -> None:
+    rows = build_behavioral_changes(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        claims=claims or [],
+        patches=patches,
+    )
     parts.append(render_behavioral_changes_markdown(rows))
 
 
-def _append_system_impact(parts: list[str], *, symbols, relationships, claims) -> None:
-    rows = build_system_impact_rows(symbols=symbols or [], relationships=relationships or [], claims=claims or [])
+def _append_system_impact(parts: list[str], *, symbols, relationships, claims, patches=None) -> None:
+    rows = build_system_impact_rows(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        claims=claims or [],
+        patches=patches,
+    )
     parts.append(render_system_impact_markdown(rows))
 
 
