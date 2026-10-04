@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
 import type { ChangeFlowDiagram, Epistemic, FileChange, RunDetail } from "./types";
@@ -184,9 +184,10 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
-              <ChangeFlowDiagram diagram={run.change_flow_diagram ?? { sections: [], text: "" }} />
+              <BehavioralChangesSection rows={run.behavioral_changes ?? []} />
+              <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
               <section className="narrative">
-                <h2>Explain</h2>
+                <h2>Summary</h2>
                 <ul className="bullets">
                   {(run.explain_bullets ?? []).map((item, index) => (
                     <li key={`${index}-${item}`}>{item}</li>
@@ -317,8 +318,12 @@ type DetailRow = {
   evidence?: string | null;
 };
 
-function MermaidDiagram({ chart }: { chart: string }) {
-  const host = useRef<HTMLDivElement>(null);
+const DIAGRAM_ZOOM_MIN = 0.5;
+const DIAGRAM_ZOOM_MAX = 2.5;
+const DIAGRAM_ZOOM_STEP = 0.25;
+const DIAGRAM_ZOOM_DEFAULT = 1;
+
+function useMermaidHost(chart: string, host: RefObject<HTMLDivElement | null>) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -339,7 +344,31 @@ function MermaidDiagram({ chart }: { chart: string }) {
     return () => {
       cancelled = true;
     };
-  }, [chart]);
+  }, [chart, host]);
+
+  return error;
+}
+
+function MermaidDiagram({ chart }: { chart: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const modalHost = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
+  const [expanded, setExpanded] = useState(false);
+  const error = useMermaidHost(chart, host);
+  const modalError = useMermaidHost(expanded ? chart : "", modalHost);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  const zoomIn = () => setZoom((value) => Math.min(DIAGRAM_ZOOM_MAX, value + DIAGRAM_ZOOM_STEP));
+  const zoomOut = () => setZoom((value) => Math.max(DIAGRAM_ZOOM_MIN, value - DIAGRAM_ZOOM_STEP));
+  const resetZoom = () => setZoom(DIAGRAM_ZOOM_DEFAULT);
 
   return (
     <section className="diagram" aria-label="Change diagram">
@@ -348,8 +377,69 @@ function MermaidDiagram({ chart }: { chart: string }) {
       ) : error ? (
         <p className="error">{error}</p>
       ) : (
-        <div ref={host} className="mermaid-host" />
+        <>
+          <div className="diagram-toolbar" role="toolbar" aria-label="Diagram controls">
+            <button
+              type="button"
+              className="diagram-control diagram-control-icon"
+              onClick={zoomOut}
+              disabled={zoom <= DIAGRAM_ZOOM_MIN}
+              aria-label="Zoom out"
+              title="Zoom out"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="diagram-control diagram-control-icon"
+              onClick={zoomIn}
+              disabled={zoom >= DIAGRAM_ZOOM_MAX}
+              aria-label="Zoom in"
+              title="Zoom in"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="diagram-control"
+              onClick={resetZoom}
+              disabled={zoom === DIAGRAM_ZOOM_DEFAULT}
+              aria-label="Reset"
+              title="Reset"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              className="diagram-control diagram-control-icon"
+              onClick={() => setExpanded(true)}
+              aria-label="Open larger"
+              title="Open larger"
+            >
+              ⛶
+            </button>
+          </div>
+          <div className="mermaid-zoom-viewport">
+            <div className="mermaid-host" ref={host} style={{ zoom }} />
+          </div>
+        </>
       )}
+      {expanded && chart && !error ? (
+        <div className="diagram-overlay" role="dialog" aria-modal="true" aria-label="Change diagram enlarged">
+          <div className="diagram-modal">
+            <div className="diagram-modal-head">
+              <button type="button" className="diagram-control" onClick={() => setExpanded(false)}>
+                Close
+              </button>
+            </div>
+            {modalError ? (
+              <p className="error">{modalError}</p>
+            ) : (
+              <div className="mermaid-host mermaid-host-expanded" ref={modalHost} />
+            )}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -357,11 +447,9 @@ function MermaidDiagram({ chart }: { chart: string }) {
 const DETAILS_ORDER = [
   "High-level areas affected",
   "Key Changes",
-  "Behavior Changes",
   "Risk Areas",
   "What changed",
   "Change flow",
-  "Impact",
   "Shared code",
   "Why a file outside the diff matters",
   "Tests",
@@ -377,7 +465,6 @@ const FOLD_SECTIONS = new Set(["Tests", "Unchanged boundary"]);
 const TABLE_HEADERS: Record<string, [string, string]> = {
   "High-level areas affected": ["Area", "Names"],
   "Key Changes": ["Change", "Location"],
-  "Behavior Changes": ["Call", "Evidence"],
   "Risk Areas": ["Where", "Why look"],
   "Suggested review areas": ["Where", "Why look"],
 };
@@ -390,13 +477,30 @@ function detailsSectionOrder<T extends { title: string }>(sections: T[]): T[] {
 const WRAP_FIRST_COLUMN = new Set([
   "High-level areas affected",
   "Key Changes",
-  "Behavior Changes",
   "Risk Areas",
   "What changed",
-  "Impact",
   "Unchanged boundary",
   "Why a file outside the diff matters",
 ]);
+
+function LabeledExplainSection({ title, rows }: { title: string; rows: { label: string; value: string }[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <section className="narrative detail-group wrap-first">
+      <h3>{title}</h3>
+      {rows.map((row, index) => (
+        <div className="detail-row" key={`${title}-${row.label}-${index}`}>
+          <span className="detail-label">{row.label}</span>
+          <span>{row.value}</span>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function BehavioralChangesSection({ rows }: { rows: { label: string; value: string }[] }) {
+  return <LabeledExplainSection title="Behavioral Changes" rows={rows} />;
+}
 
 function DetailsView({ run }: { run: RunDetail }) {
   const sections = detailsSectionOrder(run.details?.sections ?? []).filter(
@@ -448,36 +552,29 @@ function isDetailRow(row: DetailRow | null): row is DetailRow {
 
 function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
   const visible = rows.filter(isDetailRow).filter((row) => !isOmittedEmptyRow(title, row));
-  if ((title === "Impact" || title === "Risk Areas") && visible.length === 0) return null;
+  if (title === "Risk Areas" && visible.length === 0) return null;
   const folded = FOLD_SECTIONS.has(title);
   const shown = folded ? visible : visible.slice(0, DETAIL_ROW_LIMIT);
   const extra = folded ? [] : visible.slice(DETAIL_ROW_LIMIT);
-  const impact = title === "Impact";
   const headers = TABLE_HEADERS[title];
-  const className = ["detail-group", wrapFirst ? "wrap-first" : "", impact ? "impact" : ""].filter(Boolean).join(" ");
+  const className = ["detail-group", wrapFirst ? "wrap-first" : ""].filter(Boolean).join(" ");
   const body = (
     <>
       {visible.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
         <>
-          {impact ? (
-            <div className="detail-row detail-columns-head">
-              <span className="detail-label">Area</span>
-              <span>Reason</span>
-              <span>Evidence file</span>
-            </div>
-          ) : headers ? (
+          {headers ? (
             <div className="detail-row detail-columns-head">
               <span className="detail-label">{headers[0]}</span>
               <span>{headers[1]}</span>
             </div>
           ) : null}
-          <DetailRows title={title} rows={shown} impact={impact} />
+          <DetailRows title={title} rows={shown} />
           {extra.length > 0 ? (
             <details className="detail-more">
               <summary>Show {extra.length} more</summary>
-              <DetailRows title={title} rows={extra} impact={impact} />
+              <DetailRows title={title} rows={extra} />
             </details>
           ) : null}
         </>
@@ -501,48 +598,25 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
 }
 
 function isOmittedEmptyRow(title: string, row: DetailRow): boolean {
-  if (title !== "Impact" && title !== "Risk Areas") return false;
+  if (title !== "Risk Areas") return false;
   return row.value.trim().toLowerCase() === "none found";
 }
 
-function DetailRows({ title, rows, impact }: { title: string; rows: DetailRow[]; impact: boolean }) {
+function DetailRows({ title, rows }: { title: string; rows: DetailRow[] }) {
   return (
     <>
       {rows.map((row, index) => (
         <div className="detail-row" key={`${title}-${row.label}-${row.value}-${index}`}>
-          {impact ? (
-            <ImpactCells row={row} />
+          <span className="detail-label">{row.label}</span>
+          {row.href ? (
+            <a href={row.href} target="_blank" rel="noreferrer">
+              {row.value}
+            </a>
           ) : (
-            <>
-              <span className="detail-label">{row.label}</span>
-              {row.href ? (
-                <a href={row.href} target="_blank" rel="noreferrer">
-                  {row.value}
-                </a>
-              ) : (
-                <span>{row.value}</span>
-              )}
-            </>
+            <span>{row.value}</span>
           )}
         </div>
       ))}
-    </>
-  );
-}
-
-function ImpactCells({ row }: { row: DetailRow }) {
-  const evidence = row.evidence?.trim() || "";
-  return (
-    <>
-      <span className="detail-label">{row.label}</span>
-      <span>{row.value}</span>
-      {evidence && row.href ? (
-        <a className="detail-evidence" href={row.href} target="_blank" rel="noreferrer">
-          {evidence}
-        </a>
-      ) : (
-        <span className="detail-evidence">{evidence}</span>
-      )}
     </>
   );
 }
