@@ -246,8 +246,10 @@ def test_new_sha_replaces_comment_body(db):
     assert "```mermaid" in explain_body
     assert "```mermaid" not in details_body
     assert "```mermaid" not in review_body
-    assert "### Impact" in details_body
-    assert "| Area | Reason | Evidence file |" in details_body
+    assert "### System Impact" not in details_body
+    assert "| Area | Reason | Evidence file |" not in details_body
+    assert "### System Impact" in explain_body
+    assert explain_body.index("### Behavioral Changes") < explain_body.index("### System Impact")
     assert "### Reviewer Attention" not in details_body
     assert "### Reviewer Attention" in review_body
     assert "### Review questions" in review_body

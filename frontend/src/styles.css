@@ -173,8 +173,65 @@ h1 { font-size: 40px; line-height: 1.05; margin: 8px 0 12px; font-weight: 500; }
   padding: 16px 16px 8px;
 }
 .diagram h2, .narrative h2, .claims h2, .trace h2 { margin-top: 0; }
+.diagram-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.diagram-control {
+  border: 1px solid #d9d0c3;
+  background: #faf7f1;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  color: #1e1a16;
+}
+.diagram-control:hover:not(:disabled) {
+  background: #efe8dc;
+}
+.diagram-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.diagram-control-icon {
+  min-width: 2.25rem;
+  padding-left: 10px;
+  padding-right: 10px;
+  font-size: 15px;
+  line-height: 1;
+}
+.mermaid-zoom-viewport {
+  overflow: auto;
+  max-height: min(70vh, 560px);
+}
 .mermaid-host { overflow-x: auto; }
 .mermaid-host svg { max-width: 100%; height: auto; }
+.mermaid-host-expanded svg { max-width: none; width: auto; height: auto; }
+.diagram-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(30, 26, 22, 0.55);
+}
+.diagram-modal {
+  width: min(96vw, 1200px);
+  max-height: 92vh;
+  overflow: auto;
+  background: #faf7f1;
+  border: 1px solid #1e1a16;
+  padding: 16px;
+}
+.diagram-modal-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
 .lane + .lane { margin-top: 18px; padding-top: 14px; border-top: 1px solid #e4dccf; }
 .node {
   display: inline-block;
