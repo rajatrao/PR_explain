@@ -466,7 +466,6 @@ const TABLE_HEADERS: Record<string, [string, string]> = {
   "High-level areas affected": ["Area", "Names"],
   "Key Changes": ["Change", "Location"],
   "Risk Areas": ["Where", "Why look"],
-  "Suggested review areas": ["Where", "Why look"],
 };
 
 function detailsSectionOrder<T extends { title: string }>(sections: T[]): T[] {
@@ -623,7 +622,6 @@ function DetailRows({ title, rows }: { title: string; rows: DetailRow[] }) {
 
 function ReviewQuestionsView({ run }: { run: RunDetail }) {
   const attention = sectionRows(run, "Reviewer Attention");
-  const suggested = subsectionRows(run, "Reviewer Attention", "Suggested review areas");
   const questions = reviewQuestionTexts(run);
   return (
     <>
@@ -648,7 +646,6 @@ function ReviewQuestionsView({ run }: { run: RunDetail }) {
             ))}
           </ul>
         )}
-        <DetailGroup title="Suggested review areas" rows={suggested} wrapFirst />
       </section>
       <section className="review-panel" aria-label="Review questions">
         <h2>Review questions</h2>
@@ -664,13 +661,6 @@ function ReviewQuestionsView({ run }: { run: RunDetail }) {
       </section>
     </>
   );
-}
-
-function subsectionRows(run: RunDetail, sectionTitle: string, subsectionTitle: string): DetailRow[] {
-  const section = (run.details?.sections ?? []).find((item) => item.title === sectionTitle);
-  const subsection = section?.subsections?.find((item) => item.title === subsectionTitle);
-  if (!subsection) return [];
-  return subsection.rows.filter(isDetailRow).filter((row) => row.value.trim() !== "none found");
 }
 
 function sectionRows(run: RunDetail, title: string): DetailRow[] {
