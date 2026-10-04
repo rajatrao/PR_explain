@@ -77,6 +77,15 @@ def is_dunder_name(name: str | None) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
+def is_private_python_name(name: str | None, file_path: str | None) -> bool:
+    """Leading-underscore Python functions and methods. Other languages are unchanged."""
+    if not name or name.startswith("__"):
+        return False
+    if not name.startswith("_"):
+        return False
+    return language_of(file_path or "") == "python"
+
+
 def is_test_path(path: str) -> bool:
     base = posixpath.basename(path)
     if ".test." in base or ".spec." in base:

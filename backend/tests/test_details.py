@@ -497,7 +497,7 @@ def test_impact_skips_test_files_risk_is_deduped_and_long_sections_collapse():
     assert risk_labels.count("explain") == 1
     assert risk_labels.count("create_llm_provider") == 1
     assert risk_labels.count("backend/app/worker.py") == 1
-    assert risk_labels.count("_configured") == 1
+    assert "_configured" not in risk_labels
     assert all(row["value"] != "none found" for row in risk)
     explain = next(row for row in risk if row["label"] == "explain")
     assert explain["value"] == "no test reference is stored"

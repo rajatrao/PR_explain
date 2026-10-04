@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 
-from app.analyzer.parse import is_dunder_name, is_package_marker, is_test_path
+from app.analyzer.parse import is_dunder_name, is_package_marker, is_private_python_name, is_test_path
+from app.explanation.explain_view import function_file_by_name, private_python_hidden_names, without_hidden_symbols
 
 _AREAS = ("API", "Database", "Auth", "Frontend", "Backend", "Tests", "Dependencies", "Configuration")
 _UNKNOWN_KINDS = ("fanout_truncated", "ambiguous_call", "diff_only", "unknown_boundary")
@@ -121,7 +122,73 @@ def build_details(
             {"title": "Review questions", "rows": _question_rows(claims, review_questions or [], attention)},
         ]
     )
-    return {"sections": built}
+    hidden = private_python_hidden_names(
+        symbols,
+        claims,
+        claim_file=lambda claim: _claim_file(claim, evidence_by_id),
+    )
+    return {"sections": _strip_private_python_from_details(built, hidden)}
+
+
+def _strip_private_python_from_details(sections: list[dict], hidden: set[str]) -> list[dict]:
+    if not hidden:
+        return sections
+    stripped: list[dict] = []
+    for section in sections:
+        updated = dict(section)
+        updated["rows"] = _strip_private_python_rows(section.get("rows") or [], hidden)
+        subsections = []
+        for subsection in section.get("subsections") or []:
+            subsections.append(
+                {
+                    **subsection,
+                    "rows": _strip_private_python_rows(subsection.get("rows") or [], hidden),
+                }
+            )
+        if subsections:
+            updated["subsections"] = subsections
+        stripped.append(updated)
+    return stripped
+
+
+def _strip_private_python_rows(rows: list[dict], hidden: set[str]) -> list[dict]:
+    kept: list[dict] = []
+    for row in rows:
+        cleaned = _strip_private_python_row(row, hidden)
+        if cleaned is not None:
+            kept.append(cleaned)
+    return kept
+
+
+def _strip_private_python_row(row: dict, hidden: set[str]) -> dict | None:
+    label = (row.get("label") or "").strip()
+    if label in hidden:
+        return None
+    new_label = without_hidden_symbols(label, hidden)
+    if not new_label:
+        return None
+    value = row.get("value")
+    new_value = value
+    if value is not None:
+        cleaned = without_hidden_symbols(str(value), hidden)
+        if cleaned is None:
+            return None
+        new_value = cleaned
+    evidence = row.get("evidence")
+    new_evidence = evidence
+    if evidence is not None:
+        cleaned = without_hidden_symbols(str(evidence), hidden)
+        if cleaned is None:
+            return None
+        new_evidence = cleaned
+    if new_label == label and new_value == value and new_evidence == evidence:
+        return row
+    updated = dict(row)
+    updated["label"] = new_label
+    updated["value"] = new_value
+    if evidence is not None:
+        updated["evidence"] = new_evidence
+    return updated
 
 
 def _append_section(sections: list[dict], title: str, rows: list[dict], *, drop_empty: bool = False) -> None:
@@ -627,6 +694,7 @@ def _inspect_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
     seen: set[tuple[str, str]] = set()
     changed_names = _changed_names(symbols, claims)
     reason_files: set[str] = set()
+    symbol_paths = function_file_by_name(symbols)
     for claim in claims:
         if _kind(claim) != "missing_test":
             continue
@@ -635,7 +703,12 @@ def _inspect_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
             continue
         if changed_names and subject not in changed_names:
             continue
-        if is_dunder_name(subject) or _name_only_in_hidden_file(symbols, subject):
+        subject_path = symbol_paths.get(subject) or _claim_file(claim, evidence_by_id)
+        if (
+            is_dunder_name(subject)
+            or is_private_python_name(subject, subject_path)
+            or _name_only_in_hidden_file(symbols, subject)
+        ):
             continue
         _push(rows, seen, subject or "Symbol", "no test reference is stored", None)
     for claim in claims:
@@ -713,6 +786,8 @@ def _changed_functions(symbols) -> list:
         if not getattr(symbol, "name", None) or not getattr(symbol, "file_path", None):
             continue
         if _hidden_review_file(symbol.file_path) or is_dunder_name(symbol.name):
+            continue
+        if is_private_python_name(symbol.name, symbol.file_path):
             continue
         rows.append(symbol)
     rows.sort(key=lambda symbol: (symbol.file_path, getattr(symbol, "start_line", 0) or 0, symbol.name))
@@ -828,12 +903,15 @@ def _path_facts(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[tu
     for symbol in symbols:
         if not getattr(symbol, "changed", False) or not getattr(symbol, "file_path", None):
             continue
-        if _hidden_review_file(symbol.file_path) or is_dunder_name(getattr(symbol, "name", None)):
+        name = getattr(symbol, "name", None)
+        if _hidden_review_file(symbol.file_path) or is_dunder_name(name):
+            continue
+        if is_private_python_name(name, symbol.file_path):
             continue
         path = symbol.file_path
         start = getattr(symbol, "start_line", None)
         end = getattr(symbol, "end_line", None)
-        reason = f"{symbol.name} changed" if getattr(symbol, "kind", None) == "function" else "changed file"
+        reason = f"{name} changed" if getattr(symbol, "kind", None) == "function" else "changed file"
         evidence = _location(path, start, end) if start else path
         push(path, reason, evidence, _blob(repo, sha, path, start, end) if start else None)
     for claim in claims:
@@ -863,6 +941,8 @@ def _changed_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
             continue
         if _hidden_review_file(symbol.file_path) or is_dunder_name(symbol.name):
             continue
+        if is_private_python_name(symbol.name, symbol.file_path):
+            continue
         value = _location(symbol.file_path, getattr(symbol, "start_line", None), getattr(symbol, "end_line", None))
         push(symbol.name, value, _blob(repo, sha, symbol.file_path, getattr(symbol, "start_line", None), getattr(symbol, "end_line", None)))
         named.add(symbol.name)
@@ -872,7 +952,7 @@ def _changed_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
         if _hidden_review_file(_claim_file(claim, evidence_by_id)):
             continue
         subject = _subject(claim)
-        if is_dunder_name(subject):
+        if is_dunder_name(subject) or is_private_python_name(subject, _claim_file(claim, evidence_by_id)):
             continue
         if subject in named:
             continue

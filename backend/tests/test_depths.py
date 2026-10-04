@@ -69,7 +69,7 @@ def test_depth_documents_read_differently_and_stay_grounded():
 
 def test_explain_bullets_are_separate_lines_from_claims():
     result = analyze(load_oauth_snapshot())
-    bullets = explain_bullets(result.claims)
+    bullets = explain_bullets(result.claims, result.symbols)
     assert any(item.endswith("changed.") or "more changed symbols" in item for item in bullets)
     assert any(item.startswith("Major areas:") for item in bullets)
     assert all("\n" not in item for item in bullets)
