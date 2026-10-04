@@ -305,7 +305,6 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         explanation_error,
         comment_error,
     ) = _visible_statuses(session, run)
-    patches = _patches_for_run(run)
     return {
         "id": str(run.id),
         "analysis_status": analysis_status,
@@ -400,15 +399,13 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             symbols=run.symbols,
             relationships=run.relationships_,
             claims=run.claims,
-            patches=patches,
         ),
         "system_impact": build_system_impact_rows(
             symbols=run.symbols,
             relationships=run.relationships_,
             claims=run.claims,
-            patches=patches,
         ),
-        "changes": build_file_changes(run.evidences, run.claims, patches),
+        "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
         "details": build_details(
             symbols=run.symbols,
             relationships=run.relationships_,
