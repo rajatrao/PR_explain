@@ -323,7 +323,7 @@ def _packet_explanation(packet: ExplanationPacket, validation, raw_text: str):
 
 
 def _summary_from_packet(packet: ExplanationPacket, document: ExplanationDocument) -> str:
-    bullets = [item.strip() for item in explain_bullets(packet.claims) if item and item.strip()]
+    bullets = [item.strip() for item in explain_bullets(packet.claims, packet.symbols) if item and item.strip()]
     if bullets:
         return " ".join(bullets)
     texts = [statement.text.strip() for statement in document.statements() if statement.text.strip()]
@@ -442,8 +442,9 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         packet = ExplanationPacket.model_validate(packet_row.payload)
         evidence_by_id = {item.id: item for item in packet.evidence}
     stored = load_result(session, run)
-    story = build_change_flow(stored.symbols, stored.relationships, stored.evidences)
-    bullets = explain_bullets(stored.claims)
+    story_explain = build_change_flow(stored.symbols, stored.relationships, stored.evidences, for_explain=True)
+    story_full = build_change_flow(stored.symbols, stored.relationships, stored.evidences)
+    bullets = explain_bullets(stored.claims, stored.symbols)
     body = render_combined_comment(
         document=document,
         failure=failure,
@@ -453,11 +454,11 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         app_base_url=settings.app_base_url,
         run_id=str(run.id),
         evidence_by_id=evidence_by_id,
-        change_flow=story["text"],
+        change_flow=story_explain["text"],
         bullets=bullets,
-        mermaid=story["mermaid"],
+        mermaid=story_explain["mermaid"],
         claims=stored.claims,
-        sections=story["sections"],
+        sections=story_full["sections"],
         evidence=stored.evidences,
         symbols=stored.symbols,
         relationships=stored.relationships,

@@ -7,6 +7,14 @@ It does not add files, callers, or edges that the packet does not contain.
 
 from __future__ import annotations
 
+from app.analyzer.parse import is_test_path
+from app.explanation.explain_view import (
+    explain_skip_symbol,
+    function_file_by_name,
+    hidden_explain_names,
+    text_mentions_test_path,
+    without_hidden_symbols,
+)
 from app.explanation.schema import ExplanationDocument, ExplanationPacket, Statement
 
 _DEVELOPER_FLOW = {"symbol_changed", "calls"}
@@ -21,18 +29,30 @@ def compose_document(packet: ExplanationPacket) -> ExplanationDocument:
     return _deep(packet)
 
 
-def explain_bullets(claims) -> list[str]:
+def explain_bullets(claims, symbols=None) -> list[str]:
     """Short Explain lines from stored claims.
 
-    One line for what changed, one for major areas, one for each file outside
-    the diff that still reaches a changed symbol, then tests. The wording is
-    taken from those claims.
+    One line for what changed, one for major areas, and one for each file
+    outside the diff that still reaches a changed symbol. Test paths and
+    private Python helpers are omitted from this view.
     """
+    paths = function_file_by_name(symbols)
+    hidden = hidden_explain_names(symbols)
+
+    def symbol_path(name: str | None) -> str | None:
+        if not name:
+            return None
+        return paths.get(name)
+
     names: list[str] = []
     for claim in claims:
         if _kind(claim) != "symbol_changed":
             continue
         subject = _subject(claim)
+        if subject in hidden or explain_skip_symbol(subject, symbol_path(subject)):
+            continue
+        if text_mentions_test_path(_text(claim)):
+            continue
         if subject and subject not in names:
             names.append(subject)
     shown = names[:4]
@@ -42,41 +62,30 @@ def explain_bullets(claims) -> list[str]:
             changed_sentence += f" {len(names) - len(shown)} more changed symbols are in the packet."
     else:
         changed_sentence = "No changed symbols are in this packet."
-    areas = sorted({
-        _area(_subject(claim))
-        for claim in claims
-        if _kind(claim) == "file_changed" and _subject(claim)
-    })
+    areas = sorted(
+        {
+            _area(path)
+            for claim in claims
+            if _kind(claim) == "file_changed"
+            for path in [_subject(claim)]
+            if path and not is_test_path(path) and not text_mentions_test_path(path)
+        }
+    )
     area_sentence = f"Major areas: {_join(areas)}." if areas else "No changed files are in this packet."
     bullets = [changed_sentence, area_sentence]
     for claim in claims:
-        if _kind(claim) == "reaches_changed" and _text(claim):
-            bullets.append(_text(claim).strip())
-    test_lines = [_text(claim).strip() for claim in claims if _kind(claim) == "tests" and _text(claim)]
-    bullets.extend(test_lines[:4])
-    if len(test_lines) > 4:
-        bullets.append(f"{len(test_lines) - 4} more tests are stored.")
-    missing: list[str] = []
-    for claim in claims:
-        if _kind(claim) != "missing_test":
+        if _kind(claim) != "reaches_changed" or not _text(claim):
             continue
-        subject = _subject(claim)
-        if subject and subject not in missing:
-            missing.append(subject)
-    if missing:
-        shown_missing = missing[:4]
-        joined = _join(shown_missing)
-        if len(shown_missing) == 2:
-            joined = joined.replace(" and ", " or ", 1)
-        bullets.append(f"No test references {joined}.")
-        if len(missing) > len(shown_missing):
-            bullets.append(f"{len(missing) - len(shown_missing)} more symbols have no stored test reference.")
+        text = without_hidden_symbols(_text(claim).strip(), hidden)
+        if not text or text_mentions_test_path(text):
+            continue
+        bullets.append(text)
     return [item for item in bullets if item]
 
 
 def _quick(packet: ExplanationPacket) -> ExplanationDocument:
     changed = _kinds(packet, {"symbol_changed"})
-    summary = " ".join(explain_bullets(packet.claims))
+    summary = " ".join(explain_bullets(packet.claims, packet.symbols))
     anchor = _statement_from_claims(changed[:4] or _kinds(packet, {"file_changed"})[:1] or packet.claims[:1], packet)
     return ExplanationDocument(
         summary=summary,

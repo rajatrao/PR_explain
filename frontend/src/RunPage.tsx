@@ -26,7 +26,13 @@ const COVERAGE_LABEL: Record<string, string> = {
 };
 
 function coverageLabel(value: string): string {
-  return COVERAGE_LABEL[value] ?? `Coverage ${value.replaceAll("_", " ")}`;
+  const known = COVERAGE_LABEL[value];
+  if (known) return known;
+  const languages = value
+    .split(",")
+    .map((part) => part.trim().replaceAll("_", " "))
+    .filter(Boolean);
+  return languages.length ? `Coverage ${languages.join(", ")}` : "Coverage Diff only";
 }
 
 function githubTarget(run: RunDetail): { href: string; label: string } | null {
@@ -357,13 +363,16 @@ const DETAILS_ORDER = [
   "Change flow",
   "Impact",
   "Shared code",
+  "Why a file outside the diff matters",
   "Tests",
   "Unchanged boundary",
-  "Why a file outside the diff matters",
-  "Unknowns",
 ];
 
-const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention"]);
+const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention", "Unknowns"]);
+
+const DETAIL_ROW_LIMIT = 20;
+
+const FOLD_SECTIONS = new Set(["Tests", "Unchanged boundary"]);
 
 const TABLE_HEADERS: Record<string, [string, string]> = {
   "High-level areas affected": ["Area", "Names"],
@@ -438,13 +447,16 @@ function isDetailRow(row: DetailRow | null): row is DetailRow {
 }
 
 function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
-  const visible = rows.filter(isDetailRow);
+  const visible = rows.filter(isDetailRow).filter((row) => !isOmittedEmptyRow(title, row));
+  if ((title === "Impact" || title === "Risk Areas") && visible.length === 0) return null;
+  const folded = FOLD_SECTIONS.has(title);
+  const shown = folded ? visible : visible.slice(0, DETAIL_ROW_LIMIT);
+  const extra = folded ? [] : visible.slice(DETAIL_ROW_LIMIT);
   const impact = title === "Impact";
   const headers = TABLE_HEADERS[title];
   const className = ["detail-group", wrapFirst ? "wrap-first" : "", impact ? "impact" : ""].filter(Boolean).join(" ");
-  return (
-    <div className={className}>
-      <h3>{title}</h3>
+  const body = (
+    <>
       {visible.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
@@ -461,27 +473,60 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
               <span>{headers[1]}</span>
             </div>
           ) : null}
-          {visible.map((row, index) => (
-            <div className="detail-row" key={`${title}-${row.label}-${row.value}-${index}`}>
-              {impact ? (
-                <ImpactCells row={row} />
-              ) : (
-                <>
-                  <span className="detail-label">{row.label}</span>
-                  {row.href ? (
-                    <a href={row.href} target="_blank" rel="noreferrer">
-                      {row.value}
-                    </a>
-                  ) : (
-                    <span>{row.value}</span>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
+          <DetailRows title={title} rows={shown} impact={impact} />
+          {extra.length > 0 ? (
+            <details className="detail-more">
+              <summary>Show {extra.length} more</summary>
+              <DetailRows title={title} rows={extra} impact={impact} />
+            </details>
+          ) : null}
         </>
       )}
+    </>
+  );
+  if (folded) {
+    return (
+      <details className={className}>
+        <summary>{title}</summary>
+        {body}
+      </details>
+    );
+  }
+  return (
+    <div className={className}>
+      <h3>{title}</h3>
+      {body}
     </div>
+  );
+}
+
+function isOmittedEmptyRow(title: string, row: DetailRow): boolean {
+  if (title !== "Impact" && title !== "Risk Areas") return false;
+  return row.value.trim().toLowerCase() === "none found";
+}
+
+function DetailRows({ title, rows, impact }: { title: string; rows: DetailRow[]; impact: boolean }) {
+  return (
+    <>
+      {rows.map((row, index) => (
+        <div className="detail-row" key={`${title}-${row.label}-${row.value}-${index}`}>
+          {impact ? (
+            <ImpactCells row={row} />
+          ) : (
+            <>
+              <span className="detail-label">{row.label}</span>
+              {row.href ? (
+                <a href={row.href} target="_blank" rel="noreferrer">
+                  {row.value}
+                </a>
+              ) : (
+                <span>{row.value}</span>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -585,8 +630,8 @@ function reviewQuestionTexts(run: RunDetail): string[] {
 function DeltaView({ run }: { run: RunDetail }) {
   if (!run.delta || !run.delta.previous_head_sha) return null;
   return (
-    <section className="delta">
-      <h2>What is new since {run.delta.previous_head_sha.slice(0, 12)}</h2>
+    <details className="delta">
+      <summary>What is new since {run.delta.previous_head_sha.slice(0, 12)}</summary>
       <p className="kicker">{run.delta.unchanged_count} claims unchanged</p>
       {run.delta.added.map((claim) => (
         <article className="claim" key={`add-${claim.text}`}>
@@ -605,6 +650,6 @@ function DeltaView({ run }: { run: RunDetail }) {
           <p>{claim.text}</p>
         </article>
       ))}
-    </section>
+    </details>
   );
 }

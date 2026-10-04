@@ -384,15 +384,22 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         },
         "events": _events(session, run),
         "depths": list(DEPTHS),
-        "change_flow_diagram": (story := build_change_flow(run.symbols, run.relationships_, run.evidences)),
-        "explain_bullets": explain_bullets(run.claims),
+        "change_flow_diagram": (
+            story_explain := build_change_flow(
+                run.symbols,
+                run.relationships_,
+                run.evidences,
+                for_explain=True,
+            )
+        ),
+        "explain_bullets": explain_bullets(run.claims, run.symbols),
         "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
         "details": build_details(
             symbols=run.symbols,
             relationships=run.relationships_,
             evidences=run.evidences,
             claims=run.claims,
-            sections=story["sections"],
+            sections=build_change_flow(run.symbols, run.relationships_, run.evidences)["sections"],
             repo=repository.full_name,
             sha=revision.head_sha,
             document_unknowns=_document_texts(explanations, "unknowns"),
