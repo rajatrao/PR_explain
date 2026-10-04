@@ -36,7 +36,6 @@ _DEPENDENCY_NAMES = {
 _TABLE_HEADERS = {
     "High-level areas affected": ("Area", "Names"),
     "Key Changes": ("Change", "Location"),
-    "Behavior Changes": ("Call", "Evidence"),
     "Risk Areas": ("Where", "Why look"),
 }
 _KEY_LIMIT = 6
@@ -73,11 +72,9 @@ def build_details(
     review_questions: list[str] | None = None,
 ) -> dict:
     evidence_by_id = _evidence_index(evidences)
-    behavior = _behavior_rows(symbols, relationships, claims, sections or [], evidence_by_id, repo, sha)
     built: list[dict] = [
         {"title": "High-level areas affected", "rows": _area_rows(symbols, claims, evidence_by_id, repo, sha)},
         {"title": "Key Changes", "rows": _key_rows(symbols, claims, evidence_by_id, repo, sha)},
-        {"title": "Behavior Changes", "rows": behavior},
     ]
     _append_section(built, "Risk Areas", _risk_rows(symbols, claims, evidence_by_id, repo, sha), drop_empty=True)
     built.extend(
@@ -86,7 +83,6 @@ def build_details(
             {"title": "Change flow", "rows": _flow_rows(sections or [], repo, sha)},
         ]
     )
-    _append_section(built, "Impact", _impact_rows(symbols, claims, evidence_by_id, repo, sha), drop_empty=True)
     built.extend(
         [
             {"title": "Shared code", "rows": _shared_rows(symbols, relationships)},
@@ -105,19 +101,6 @@ def build_details(
                         document_unknowns or [],
                     )
                 ),
-                "subsections": [
-                    {
-                        "title": "Suggested review areas",
-                        "rows": _suggested_rows(
-                            symbols,
-                            claims,
-                            evidence_by_id,
-                            repo,
-                            sha,
-                            document_unknowns or [],
-                        ),
-                    }
-                ],
             },
             {"title": "Review questions", "rows": _question_rows(claims, review_questions or [], attention)},
         ]
@@ -207,9 +190,6 @@ def render_details_markdown(details: dict) -> str:
     blocks: list[str] = []
     for section in details.get("sections") or []:
         title = section.get("title")
-        if title == "Impact":
-            blocks.append(_impact_markdown(section))
-            continue
         if title == "Change flow":
             blocks.append(_change_flow_markdown(section))
             continue
@@ -332,52 +312,6 @@ def _two_column_row_lines(rows: list) -> list[str]:
     return lines
 
 
-def _impact_markdown(section: dict) -> str:
-    lines = [
-        "### Impact",
-        "",
-        "| Area | Reason | Evidence file |",
-        "| --- | --- | --- |",
-    ]
-    rows = section.get("rows") or []
-    if not rows:
-        lines.append("| Item | none found | |")
-        return "\n".join(lines)
-    shown, hidden = _split_rows(rows)
-    lines.extend(_impact_row_lines(shown))
-    if hidden:
-        lines.extend(
-            _collapsed_block(
-                len(hidden),
-                [
-                    "| Area | Reason | Evidence file |",
-                    "| --- | --- | --- |",
-                    *_impact_row_lines(hidden),
-                ],
-            )
-        )
-    return "\n".join(lines)
-
-
-def _impact_row_lines(rows: list) -> list[str]:
-    lines = []
-    for row in rows:
-        label = _md_cell(row.get("label") or "Item")
-        value = _md_cell(row.get("value") or "none found")
-        evidence = row.get("evidence") or ""
-        href = row.get("href")
-        if evidence and href:
-            cell = f"[{_md_cell(evidence)}]({href})"
-        elif evidence:
-            cell = _md_cell(evidence)
-        elif href:
-            cell = href
-        else:
-            cell = ""
-        lines.append(f"| {label} | {value} | {cell} |")
-    return lines
-
-
 def _md_cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
 
@@ -441,75 +375,6 @@ def _key_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict
     if hidden:
         chosen.append(_row("More", f"{hidden} more changed symbols are stored.", None))
     return chosen
-
-
-def _behavior_rows(symbols, relationships, claims, sections, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    rows = _behavior_from_relationships(symbols, relationships, evidence_by_id, repo, sha)
-    if not rows:
-        rows = _behavior_from_claims(claims, evidence_by_id, repo, sha)
-    if not rows:
-        rows = _behavior_from_sections(sections, repo, sha)
-    return rows or [_row("Behavior", "none found", None)]
-
-
-def _behavior_from_relationships(symbols, relationships, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    changed_ids, changed_names = _changed_identity(symbols)
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for rel in relationships or []:
-        if getattr(rel, "type", None) != "CALLS":
-            continue
-        source = _rel_end(rel, "source")
-        target = _rel_end(rel, "target")
-        source_name = getattr(rel, "source_name", None) or ""
-        target_name = getattr(rel, "target_name", None) or ""
-        touches = (
-            (source and source in changed_ids)
-            or (target and target in changed_ids)
-            or source_name in changed_names
-            or target_name in changed_names
-        )
-        if not touches or not source_name or not target_name:
-            continue
-        label = f"{_short_name(source_name)} calls {target_name}"
-        evidence_id = getattr(rel, "evidence_public_id", None) or getattr(rel, "evidence_id", None)
-        value, href = _evidence_place(evidence_by_id.get(evidence_id), repo, sha)
-        _push(rows, seen, label, value or "stored call", href)
-    rows.sort(key=lambda row: (row["label"], row["value"]))
-    return rows
-
-
-def _behavior_from_claims(claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for claim in claims or []:
-        if _kind(claim) != "calls":
-            continue
-        label = _sentence(claim)
-        if not label or "import" in label.lower():
-            continue
-        value, href = _claim_location(claim, evidence_by_id, repo, sha)
-        _push(rows, seen, label, value or "stored call", href)
-    return rows
-
-
-def _behavior_from_sections(sections, repo: str, sha: str) -> list[dict]:
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for section in sections or []:
-        heading = section.get("heading") or ""
-        if heading in {"Changed", "Tests"}:
-            continue
-        for item in section.get("items") or []:
-            text = (item.get("text") or "").strip()
-            lowered = text.lower()
-            if "calls " not in lowered or "import" in lowered or text == "no direct call found":
-                continue
-            label = f"{heading} {text}" if text.startswith("calls ") and heading else text
-            detail = item.get("detail")
-            href = _href_for_location(repo, sha, detail) if detail else None
-            _push(rows, seen, label, detail or "stored call", href)
-    return rows
 
 
 def _risk_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
@@ -612,24 +477,10 @@ def _dedupe_risk_rows(rows: list[dict]) -> list[dict]:
     return kept
 
 
-def _suggested_rows(symbols, claims, evidence_by_id, repo: str, sha: str, document_unknowns: list[str]) -> list[dict]:
-    """Symbol or file to open, with one specific reason.
-
-    Directory labels such as Frontend or Database are left out. A path is not
-    an area change. Packet unknowns are not rendered on Details.
-    This does not score the change.
-    """
-    return _without_unknowns(
-        _inspect_rows(symbols, claims, evidence_by_id, repo, sha),
-        claims,
-        document_unknowns,
-    )
-
-
 def _subsection_markdown(section: dict) -> str:
     blocks: list[str] = []
     for subsection in section.get("subsections") or []:
-        title = subsection.get("title") or "Suggested review areas"
+        title = subsection.get("title") or "Section"
         lines = [f"#### {title}", ""]
         rows = [
             row
@@ -836,51 +687,6 @@ def _is_path(label: str) -> bool:
     if "." in base:
         return True
     return base in _CONFIG_NAMES or base in _DEPENDENCY_NAMES
-
-
-def _short_name(name: str) -> str:
-    if "/" in name:
-        return name.rstrip("/").rsplit("/", 1)[-1]
-    return name
-
-
-def _impact_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    buckets: dict[str, list[dict]] = {area: [] for area in _AREAS}
-    seen: set[tuple[str, str]] = set()
-
-    def add(area: str, label: str, value: str, href: str | None, evidence: str | None) -> None:
-        key = (area, label)
-        if not label or key in seen:
-            return
-        if _is_test_evidence(label) or _is_test_evidence(value) or _is_test_evidence(evidence):
-            return
-        if not value or value.strip().casefold() == "none found":
-            return
-        seen.add(key)
-        buckets[area].append(_impact_row(label, value, href, evidence))
-
-    for claim in claims:
-        kind = _kind(claim)
-        evidence, href = _claim_location(claim, evidence_by_id, repo, sha)
-        if kind == "defines_api":
-            add("API", _subject(claim) or "API", _sentence(claim), href, evidence)
-        elif kind in {"dependency_changed", "dependency"}:
-            add("Dependencies", _subject(claim) or "Dependency", _sentence(claim), href, evidence)
-        elif kind == "tests":
-            add("Tests", _subject(claim) or "Test", _sentence(claim), href, evidence)
-
-    for path, reason, evidence, href in _path_facts(symbols, claims, evidence_by_id, repo, sha):
-        area = _path_area(path)
-        if area is None or area == "API":
-            continue
-        if area == "Dependencies" and any(_kind(claim) in {"dependency_changed", "dependency"} for claim in claims):
-            continue
-        add(area, path, reason, href, evidence)
-
-    rows: list[dict] = []
-    for area in _AREAS:
-        rows.extend(buckets[area])
-    return [row for row in rows if not _is_none_found_row(row)]
 
 
 def _path_facts(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[tuple[str, str, str | None, str | None]]:
@@ -1200,13 +1006,6 @@ def _evidence_index(evidences) -> dict:
 
 def _row(label: str, value: str, href: str | None) -> dict:
     return {"label": label, "value": value, "href": href}
-
-
-def _impact_row(label: str, value: str, href: str | None, evidence: str | None) -> dict:
-    row = _row(label, value, href)
-    if evidence:
-        row["evidence"] = evidence
-    return row
 
 
 def _location(file: str | None, start, end) -> str:

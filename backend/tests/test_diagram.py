@@ -109,15 +109,10 @@ def test_two_calls_and_one_outside_caller_render_story_headings():
         change_flow=explain_story["text"],
     )
     assert "Widget changed." in body
-    assert "### Change flow" in body
-    flow = body.split("### Change flow", 1)[1]
-    assert "- Changed" in flow
-    assert "  - calls alpha" in flow
-    assert "    - src/widget.ts:3" in flow
+    assert "### Change flow" not in body
+    assert "- Changed" not in body
+    assert "Reached from outside this diff" not in body
     assert "```\nChanged" not in body
-    assert "Reached from outside this diff" in body
-    assert "Tests" not in flow
-    assert "none found for these symbols" not in body
     assert "one-hop" not in body.lower()
 
 
@@ -151,11 +146,8 @@ def test_explain_comment_mermaid_names_changed_symbols_without_invented_edges():
         mermaid=story["mermaid"],
     )
     assert "```mermaid" in body
-    assert "### Change flow" in body
-    flow = body.split("### Change flow", 1)[1]
-    assert "- Changed" in flow
-    assert "  - calls alpha" in flow
-    assert "```\nChanged" not in body
+    assert "### Change flow" not in body
+    assert "- Changed" not in body
     assert "- Widget changed." in body
     fence = body.split("```mermaid", 1)[1].split("```", 1)[0]
     assert "Widget" in fence

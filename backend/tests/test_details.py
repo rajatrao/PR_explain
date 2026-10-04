@@ -6,18 +6,12 @@ from app.explanation.schema import ExplanationDocument
 from app.github.comment import explain_marker, render_combined_comment
 
 
-def _suggested(details: dict) -> dict:
-    section = next(item for item in details["sections"] if item["title"] == "Reviewer Attention")
-    return next(item for item in section["subsections"] if item["title"] == "Suggested review areas")
-
 _TITLES = [
     "High-level areas affected",
     "Key Changes",
-    "Behavior Changes",
     "Risk Areas",
     "What changed",
     "Change flow",
-    "Impact",
     "Shared code",
     "Why a file outside the diff matters",
     "Tests",
@@ -29,11 +23,9 @@ _TITLES = [
 _COMMENT_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
-    "### Behavior Changes",
     "### Risk Areas",
     "### What changed",
     "### Change flow",
-    "### Impact",
     "### Shared code",
     "### Why a file outside the diff matters",
     "<summary>Tests</summary>",
@@ -58,22 +50,8 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert [section["title"] for section in details["sections"]] == _TITLES
     rows = {section["title"]: section["rows"] for section in details["sections"]}
 
-    impact = {row["label"]: row["value"] for row in rows["Impact"]}
-    for empty_area in ("Database", "Frontend", "Backend", "Configuration", "Tests"):
-        assert empty_area not in impact or impact[empty_area] != "none found"
-    assert all(row["value"] != "none found" for row in rows["Impact"])
-    assert any(row["label"] == "createSession" and ("API" in row["value"] or "exported" in row["value"]) for row in rows["Impact"])
-    linked = [row for row in rows["Impact"] if row.get("href")]
-    assert linked
-    for row in linked:
-        assert row.get("evidence")
-        assert row["evidence"] != row["value"]
-        assert row["evidence"].split(":")[0] in row["href"]
-    impact_blob = " ".join(
-        f"{row.get('label', '')} {row.get('value', '')} {row.get('evidence', '')}" for row in rows["Impact"]
-    )
-    assert "login.test.ts" not in impact_blob
-    assert "oauth.test.ts" not in impact_blob
+    assert "System Impact" not in rows
+    assert "Impact" not in rows
 
     assert "Change Overview" not in rows
     assert "Unknowns" not in rows
@@ -92,10 +70,8 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert any("/" in label for label in changed_labels)
     assert all("/" not in label for label in key_labels if label != "More")
 
-    behavior = rows["Behavior Changes"]
-    assert any("calls " in row["label"] for row in behavior)
-    assert all("import" not in row["label"].lower() for row in behavior)
-    assert all(row["value"] != "none found" for row in behavior)
+    assert "Behavior Changes" not in rows
+    assert "Behavioral Changes" not in rows
 
     risk_text = " ".join(row["value"] for row in rows["Risk Areas"]).lower()
     assert any(row["value"] == "no test reference is stored" for row in rows["Risk Areas"])
@@ -118,21 +94,12 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "none found" not in attention
     for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
         assert banned_label not in {row["label"] for row in attention_rows}
-    suggested = _suggested(details)
-    assert suggested["title"] == "Suggested review areas"
     assert "Suggested review areas" not in [section["title"] for section in details["sections"]]
-    suggested_labels = [row["label"] for row in suggested["rows"]]
-    for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
-        assert banned_label not in suggested_labels
-    assert any(row["label"] == "createSession" and row["value"] == "no test reference is stored" for row in suggested["rows"])
-    assert any(row["label"] == "src/login.ts" and row["value"] == "login calls createSession" for row in suggested["rows"])
-    assert any(
-        row["label"] == "src/password.ts" and row["value"] == "reaches changed symbol createSession"
-        for row in suggested["rows"]
+    assert not any(
+        subsection.get("title") == "Suggested review areas"
+        for section in details["sections"]
+        for subsection in section.get("subsections") or []
     )
-    suggested_text = " ".join(row["value"] for row in suggested["rows"]).lower()
-    for banned in ("insecure", "broken", "risky", "approve", "score"):
-        assert banned not in suggested_text
 
     changed = next(row for row in rows["What changed"] if row["label"] == "createSession")
     assert "src/session.ts" in changed["value"]
@@ -182,10 +149,15 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "## Diagram" not in body
     assert "```mermaid" not in details
     assert "```mermaid" not in review
-    assert "### Impact" in details
-    assert "| Area | Reason | Evidence file |" in details
-    impact_md = details.split("### Impact", 1)[1].split("### ", 1)[0]
-    assert "[is changed" not in impact_md
+    assert "### System Impact" not in details
+    assert "### System Impact" in explain
+    assert "| Area | Reason | Evidence file |" not in details
+    system_md = explain.split("### System Impact", 1)[1].split("## ", 1)[0]
+    assert "**System Impact**" in system_md
+    assert "**Reviewer Considerations**" in system_md
+    assert "**Risk & Scope**" in system_md
+    assert explain.index("### Behavioral Changes") < explain.index("### System Impact")
+    assert explain.index("### System Impact") < explain.rindex("- createSession changed.")
     assert "### What changed" in details
     assert "createSession" in body
     detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]
@@ -196,23 +168,22 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Unknowns" not in details
     assert "| Area | Names |" in details
     assert "| Change | Location |" in details
-    assert "| Call | Evidence |" in details
     assert "| Where | Why look |" in details
-    behavior_md = details.split("### Behavior Changes", 1)[1].split("### ", 1)[0]
-    assert "calls " in behavior_md
-    assert "import" not in behavior_md.lower()
+    assert "### Behavior Changes" not in details
+    assert "### Behavioral Changes" in explain
+    assert "### Behavioral Changes" not in details
+    assert "### Change flow" not in explain
+    assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
     assert "### Reviewer Attention" not in details
     assert "### Review questions" not in details
     assert "### Reviewer Attention" in review
-    assert "#### Suggested review areas" in review
-    assert "### Suggested review areas" not in body.replace("#### Suggested review areas", "")
-    assert "| Where | Why look |" in review
+    assert "Suggested review areas" not in review
+    assert "| Where | Why look |" not in review
     assert "### Trace" not in body
     assert "what test should reference" not in review.lower()
     attention_at = review.index("### Reviewer Attention")
-    suggested_at = review.index("#### Suggested review areas")
     questions_at = review.index("### Review questions")
-    assert attention_at < suggested_at < questions_at
+    assert attention_at < questions_at
     lowered = body.lower()
     assert "one-hop" not in lowered
     assert "insecure" not in lowered
@@ -262,7 +233,7 @@ class _Claim:
         self.evidence_ids = evidence_ids or []
 
 
-def test_behavior_changes_use_stored_calls_and_name_a_gap():
+def test_details_omits_behavior_section_and_still_surfaces_risk():
     symbol = _Symbol("changedFn", "src/a.ts", exported=True)
     relationships = [
         _Rel("IMPORTS", "importer", "changedFn", "src/b.ts", "src/a.ts", "ev-import"),
@@ -300,10 +271,7 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
         ],
     )
     rows = {section["title"]: section["rows"] for section in details["sections"]}
-    behavior = rows["Behavior Changes"]
-    assert [row["label"] for row in behavior] == ["caller calls changedFn"]
-    assert behavior[0]["value"] == "src/c.ts:8"
-    assert "import" not in behavior[0]["label"].lower()
+    assert "Behavior Changes" not in rows
 
     risk_labels = {row["label"] for row in rows["Risk Areas"]}
     assert "changedFn" in risk_labels
@@ -326,13 +294,6 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
         assert unknown_text not in [row["value"] for section in rows.values() for row in section]
     assert not any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"])
     assert all(row["label"] != "Database" for row in rows["Reviewer Attention"])
-    suggested_rows = _suggested(details)["rows"]
-    assert any(row["label"] == "changedFn" and row["value"] == "no test reference is stored" for row in suggested_rows)
-    assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in suggested_rows)
-    assert not any(row["label"] == "Unknown" for row in suggested_rows)
-    assert not any("facts are in this packet" in row["value"] for row in suggested_rows)
-    assert all(row["label"] not in {"API", "Database", "Frontend", "Backend", "Auth"} for row in suggested_rows)
-    assert "caller" not in {row["label"] for row in suggested_rows}
     assert [row["value"] for row in rows["Review questions"]] == ["Does caller still pass the value changedFn returns?"]
 
     empty = build_details(
@@ -345,10 +306,14 @@ def test_behavior_changes_use_stored_calls_and_name_a_gap():
         sha="a" * 40,
     )
     empty_rows = {section["title"]: section["rows"] for section in empty["sections"]}
-    assert empty_rows["Behavior Changes"] == [{"label": "Behavior", "value": "none found", "href": None}]
+    assert "Behavior Changes" not in empty_rows
     assert "Change Overview" not in empty_rows
     assert empty_rows["Reviewer Attention"] == [{"label": "Inspect", "value": "none found", "href": None}]
-    assert _suggested(empty)["rows"] == []
+    assert not any(
+        subsection.get("title") == "Suggested review areas"
+        for section in empty["sections"]
+        for subsection in section.get("subsections") or []
+    )
 
 
 def test_change_overview_is_absent():
@@ -386,7 +351,7 @@ def test_change_overview_is_absent():
     assert "Change Overview" not in render_details_markdown(files_only)
 
 
-def test_impact_skips_test_files_risk_is_deduped_and_long_sections_collapse():
+def test_system_impact_skips_test_paths_risk_is_deduped_and_long_sections_collapse():
     symbols = [
         _Symbol("explain", "backend/app/llm/provider.py"),
         _Symbol("create_llm_provider", "backend/app/llm/provider.py"),
@@ -460,22 +425,7 @@ def test_impact_skips_test_files_risk_is_deduped_and_long_sections_collapse():
     assert "Unknowns" not in rows
     assert "Change Overview" not in rows
 
-    impact_blob = " ".join(
-        f"{row.get('label', '')} {row.get('value', '')} {row.get('evidence', '')}" for row in rows["Impact"]
-    )
-    assert "backend/app/llm/provider.py" in impact_blob
-    assert "backend/app/extra0.py" in impact_blob
-    for banned in (
-        "test_provider.py",
-        "run_test.py",
-        "service_test.go",
-        "AppTest.java",
-        "AppTests.java",
-        "ui.test.tsx",
-        "ui.spec.ts",
-        "test_fn0.py",
-    ):
-        assert banned not in impact_blob
+    assert "System Impact" not in rows
 
     risk = rows["Risk Areas"]
     risk_labels = [row["label"] for row in risk]
@@ -517,9 +467,6 @@ def test_impact_skips_test_files_risk_is_deduped_and_long_sections_collapse():
     assert f"test_fn{len(rows['Tests']) - 1}.py" in tests_md or "fn21" in tests_md
     boundary_md = markdown.split("<summary>Unchanged boundary</summary>", 1)[1].split("</details>", 1)[0]
     assert boundary_md.strip()
-    impact_md = markdown.split("### Impact", 1)[1].split("\n### ", 1)[0]
-    assert "<summary>" in impact_md
-    assert "<details open" not in impact_md
-    assert "test_provider.py" not in impact_md
+    assert "### System Impact" not in markdown
     shared_md = markdown.split("### Shared code", 1)[1].split("<details>", 1)[0]
     assert "<details>" not in shared_md
