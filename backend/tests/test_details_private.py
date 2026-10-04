@@ -92,15 +92,12 @@ def test_review_sections_hide_private_python():
         review_questions=review_questions,
     )
     attention = next(section for section in details["sections"] if section["title"] == "Reviewer Attention")
-    suggested = next(
-        subsection
-        for subsection in attention.get("subsections") or []
-        if subsection.get("title") == "Suggested review areas"
+    assert not any(
+        subsection.get("title") == "Suggested review areas" for subsection in attention.get("subsections") or []
     )
     questions = next(section for section in details["sections"] if section["title"] == "Review questions")
     blobs = [
         " ".join(f"{row.get('label')} {row.get('value')}" for row in attention.get("rows") or []),
-        " ".join(f"{row.get('label')} {row.get('value')}" for row in suggested.get("rows") or []),
         " ".join(f"{row.get('label')} {row.get('value')}" for row in questions.get("rows") or []),
     ]
     joined = " ".join(blobs)

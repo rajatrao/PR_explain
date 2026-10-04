@@ -101,19 +101,6 @@ def build_details(
                         document_unknowns or [],
                     )
                 ),
-                "subsections": [
-                    {
-                        "title": "Suggested review areas",
-                        "rows": _suggested_rows(
-                            symbols,
-                            claims,
-                            evidence_by_id,
-                            repo,
-                            sha,
-                            document_unknowns or [],
-                        ),
-                    }
-                ],
             },
             {"title": "Review questions", "rows": _question_rows(claims, review_questions or [], attention)},
         ]
@@ -490,24 +477,10 @@ def _dedupe_risk_rows(rows: list[dict]) -> list[dict]:
     return kept
 
 
-def _suggested_rows(symbols, claims, evidence_by_id, repo: str, sha: str, document_unknowns: list[str]) -> list[dict]:
-    """Symbol or file to open, with one specific reason.
-
-    Directory labels such as Frontend or Database are left out. A path is not
-    an area change. Packet unknowns are not rendered on Details.
-    This does not score the change.
-    """
-    return _without_unknowns(
-        _inspect_rows(symbols, claims, evidence_by_id, repo, sha),
-        claims,
-        document_unknowns,
-    )
-
-
 def _subsection_markdown(section: dict) -> str:
     blocks: list[str] = []
     for subsection in section.get("subsections") or []:
-        title = subsection.get("title") or "Suggested review areas"
+        title = subsection.get("title") or "Section"
         lines = [f"#### {title}", ""]
         rows = [
             row

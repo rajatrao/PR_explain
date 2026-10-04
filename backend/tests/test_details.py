@@ -6,10 +6,6 @@ from app.explanation.schema import ExplanationDocument
 from app.github.comment import explain_marker, render_combined_comment
 
 
-def _suggested(details: dict) -> dict:
-    section = next(item for item in details["sections"] if item["title"] == "Reviewer Attention")
-    return next(item for item in section["subsections"] if item["title"] == "Suggested review areas")
-
 _TITLES = [
     "High-level areas affected",
     "Key Changes",
@@ -98,21 +94,12 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "none found" not in attention
     for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
         assert banned_label not in {row["label"] for row in attention_rows}
-    suggested = _suggested(details)
-    assert suggested["title"] == "Suggested review areas"
     assert "Suggested review areas" not in [section["title"] for section in details["sections"]]
-    suggested_labels = [row["label"] for row in suggested["rows"]]
-    for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
-        assert banned_label not in suggested_labels
-    assert any(row["label"] == "createSession" and row["value"] == "no test reference is stored" for row in suggested["rows"])
-    assert any(row["label"] == "src/login.ts" and row["value"] == "login calls createSession" for row in suggested["rows"])
-    assert any(
-        row["label"] == "src/password.ts" and row["value"] == "reaches changed symbol createSession"
-        for row in suggested["rows"]
+    assert not any(
+        subsection.get("title") == "Suggested review areas"
+        for section in details["sections"]
+        for subsection in section.get("subsections") or []
     )
-    suggested_text = " ".join(row["value"] for row in suggested["rows"]).lower()
-    for banned in ("insecure", "broken", "risky", "approve", "score"):
-        assert banned not in suggested_text
 
     changed = next(row for row in rows["What changed"] if row["label"] == "createSession")
     assert "src/session.ts" in changed["value"]
@@ -190,15 +177,13 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Reviewer Attention" not in details
     assert "### Review questions" not in details
     assert "### Reviewer Attention" in review
-    assert "#### Suggested review areas" in review
-    assert "### Suggested review areas" not in body.replace("#### Suggested review areas", "")
-    assert "| Where | Why look |" in review
+    assert "Suggested review areas" not in review
+    assert "| Where | Why look |" not in review
     assert "### Trace" not in body
     assert "what test should reference" not in review.lower()
     attention_at = review.index("### Reviewer Attention")
-    suggested_at = review.index("#### Suggested review areas")
     questions_at = review.index("### Review questions")
-    assert attention_at < suggested_at < questions_at
+    assert attention_at < questions_at
     lowered = body.lower()
     assert "one-hop" not in lowered
     assert "insecure" not in lowered
@@ -309,13 +294,6 @@ def test_details_omits_behavior_section_and_still_surfaces_risk():
         assert unknown_text not in [row["value"] for section in rows.values() for row in section]
     assert not any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"])
     assert all(row["label"] != "Database" for row in rows["Reviewer Attention"])
-    suggested_rows = _suggested(details)["rows"]
-    assert any(row["label"] == "changedFn" and row["value"] == "no test reference is stored" for row in suggested_rows)
-    assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in suggested_rows)
-    assert not any(row["label"] == "Unknown" for row in suggested_rows)
-    assert not any("facts are in this packet" in row["value"] for row in suggested_rows)
-    assert all(row["label"] not in {"API", "Database", "Frontend", "Backend", "Auth"} for row in suggested_rows)
-    assert "caller" not in {row["label"] for row in suggested_rows}
     assert [row["value"] for row in rows["Review questions"]] == ["Does caller still pass the value changedFn returns?"]
 
     empty = build_details(
@@ -331,7 +309,11 @@ def test_details_omits_behavior_section_and_still_surfaces_risk():
     assert "Behavior Changes" not in empty_rows
     assert "Change Overview" not in empty_rows
     assert empty_rows["Reviewer Attention"] == [{"label": "Inspect", "value": "none found", "href": None}]
-    assert _suggested(empty)["rows"] == []
+    assert not any(
+        subsection.get("title") == "Suggested review areas"
+        for section in empty["sections"]
+        for subsection in section.get("subsections") or []
+    )
 
 
 def test_change_overview_is_absent():
