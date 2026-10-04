@@ -480,7 +480,7 @@ def test_details_comment_collapses_long_sections_and_omits_unknowns():
     explain_part = body.split("## Details for", 1)[0]
     system = explain_part.split("### System Impact", 1)[1].split("## ", 1)[0]
     assert "test_fn0.py" not in system
-    assert "backend/app/llm/provider.py" in system
+    assert "backend/app/llm/provider.py" not in system
     assert "**Risk & Scope**" in system
     assert "### Risk Areas" not in details
     assert "| add |" not in details
