@@ -35,6 +35,8 @@ CATEGORY_ORDER = {
     "logic": 8,
 }
 
+_GUARDED = {"error", "return", "call", "value", "logging"}
+
 CATEGORY_LABEL = {
     "removed_function": "Function removed",
     "signature": "Inputs",
@@ -80,6 +82,7 @@ _NOT_CALLS = {
 }
 # `raise X(...)` / `throw new X(...)` / `new X(...)` build a value; they are not calls into code.
 _CONSTRUCTED = re.compile(r"(?:\braise|\bthrow(?:\s+new)?|\bnew)\s*$")
+_CONDITION_HEAD = re.compile(r"^(?:\}\s*)?(?:if|elif|else\s+if|while|when|unless|guard)\b")
 _TRIVIAL = re.compile(r"^(?:[{}()\[\];,]+|else\s*:?|else\s*\{|\}\s*else\s*\{|pass|break|continue|end|\*/|/\*\*?|\"\"\"|''')$")
 _COMMENT = re.compile(r"^(?:#|//|/\*|\*|--)")
 _IMPORT = re.compile(r"^(?:import\b|from\s+\S+\s+import\b|package\b|using\b|#include\b|require\()")
@@ -91,6 +94,7 @@ class _Line:
     old: int | None
     new: int | None
     text: str
+    indent: int = 0
     kind: str = "logic"
     key: str | None = None
     consumed: bool = False
@@ -114,6 +118,8 @@ class BehaviorDelta:
     after: str | None
     before_line: int | None
     after_line: int | None
+    before_guard: str | None = None
+    after_guard: str | None = None
 
     @property
     def label(self) -> str:
@@ -142,7 +148,8 @@ def extract_behavior_deltas(
         grouped: dict[str | None, list[_Block]] = {}
         owners: dict[str | None, Symbol | None] = {}
         removed_functions: dict[str, _Line] = {}
-        for block in _blocks(change.patch):
+        blocks, old_view, new_view = _blocks(change.patch)
+        for block in blocks:
             for line in block.removed:
                 name = _header_name(line.text)
                 if name and name not in head_names and name not in removed_functions:
@@ -169,7 +176,7 @@ def extract_behavior_deltas(
 
         for key, blocks in grouped.items():
             owner = owners.get(key)
-            found = _deltas_for(blocks, owner, change.path, language, removed_functions)
+            found = _deltas_for(blocks, owner, change.path, language, removed_functions, old_view, new_view)
             deltas.extend(found)
 
     return _limit(deltas)
@@ -192,7 +199,9 @@ def _limit(deltas: list[BehaviorDelta]) -> list[BehaviorDelta]:
     return kept
 
 
-def _deltas_for(blocks, owner: Symbol | None, path: str, language: str, removed_functions) -> list[BehaviorDelta]:
+def _deltas_for(
+    blocks, owner: Symbol | None, path: str, language: str, removed_functions, old_view=None, new_view=None
+) -> list[BehaviorDelta]:
     removed: list[_Line] = []
     added: list[_Line] = []
     for block in blocks:
@@ -225,6 +234,8 @@ def _deltas_for(blocks, owner: Symbol | None, path: str, language: str, removed_
                 after=_cap(after.text) if after else None,
                 before_line=before.old if before else None,
                 after_line=after.new if after else None,
+                before_guard=_guard(before.old, before.indent, old_view or {}) if before and category in _GUARDED else None,
+                after_guard=_guard(after.new, after.indent, new_view or {}) if after and category in _GUARDED else None,
             )
         )
 
@@ -243,8 +254,11 @@ def _deltas_for(blocks, owner: Symbol | None, path: str, language: str, removed_
 # --- patch reading ---------------------------------------------------------
 
 
-def _blocks(patch: str) -> list[_Block]:
+def _blocks(patch: str) -> tuple[list[_Block], dict[int, tuple[int, str]], dict[int, tuple[int, str]]]:
+    """Change blocks plus each side's visible lines (context and changed) keyed by line number."""
     blocks: list[_Block] = []
+    old_view: dict[int, tuple[int, str]] = {}
+    new_view: dict[int, tuple[int, str]] = {}
     current: _Block | None = None
     old_no = new_no = None
     for raw in patch.splitlines():
@@ -258,23 +272,56 @@ def _blocks(patch: str) -> list[_Block]:
             continue
         if old_no is None or new_no is None or raw.startswith(("+++", "---", "\\")):
             continue
+        body = raw[1:]
+        indent = len(body.expandtabs(4)) - len(body.expandtabs(4).lstrip())
+        text = body.strip()
         if raw.startswith("-"):
             if current is None:
                 current = _Block(anchor=new_no)
                 blocks.append(current)
-            current.removed.append(_Line(old=old_no, new=None, text=raw[1:].strip()))
+            current.removed.append(_Line(old=old_no, new=None, text=text, indent=indent))
+            old_view[old_no] = (indent, text)
             old_no += 1
         elif raw.startswith("+"):
             if current is None:
                 current = _Block(anchor=new_no)
                 blocks.append(current)
-            current.added.append(_Line(old=None, new=new_no, text=raw[1:].strip()))
+            current.added.append(_Line(old=None, new=new_no, text=text, indent=indent))
+            new_view[new_no] = (indent, text)
             new_no += 1
         else:
             current = None
+            old_view[old_no] = (indent, text)
+            new_view[new_no] = (indent, text)
             old_no += 1
             new_no += 1
-    return blocks
+    return blocks, old_view, new_view
+
+
+def _guard(line_no: int | None, indent: int, view: dict[int, tuple[int, str]]) -> str | None:
+    """The condition that encloses a statement: the nearest earlier line on the same side with less indentation."""
+    if line_no is None:
+        return None
+    for number in range(line_no - 1, max(0, line_no - 8), -1):
+        entry = view.get(number)
+        if entry is None:
+            return None
+        other_indent, text = entry
+        if not text or _COMMENT.match(text):
+            continue
+        if other_indent < indent:
+            if _CONDITION_HEAD.match(text):
+                return _condition_text(text)
+            return None
+    return None
+
+
+def _condition_text(text: str) -> str:
+    cleaned = re.sub(r"^(?:\}\s*)?(?:else\s+if|elif|if|while|when|unless|guard)\b\s*", "", text)
+    cleaned = cleaned.rstrip("{:").strip()
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        cleaned = cleaned[1:-1].strip()
+    return _cap(cleaned, 80)
 
 
 def _owner(block: _Block, functions: list[Symbol]) -> Symbol | None:
@@ -422,10 +469,10 @@ def _summary(category: str, before: _Line | None, after: _Line | None, language:
         return _signature_summary(before, after, language, name)
     if category == "error":
         if before and after:
-            return f"Fails differently: {_error_target(before.text)} becomes {_error_target(after.text)}."
+            return f"Fails differently: {error_target(before.text)} becomes {error_target(after.text)}."
         if after:
-            return f"Now fails with {_error_target(after.text)} on this path."
-        return f"No longer fails with {_error_target(before.text)} on this path."
+            return f"Now fails with {error_target(after.text)} on this path."
+        return f"No longer fails with {error_target(before.text)} on this path."
     if category == "return":
         if before and after:
             return "The returned expression changed."
@@ -575,7 +622,7 @@ def _return_annotation(header: str) -> str:
     return re.sub(r"\s+", "", header[close + 1 :]).rstrip("{:") if close >= 0 else ""
 
 
-def _error_target(text: str) -> str:
+def error_target(text: str) -> str:
     match = re.search(r"(?:raise|throw)\s+(?:new\s+)?([A-Za-z_][\w.]*)", text)
     if match:
         return match.group(1)

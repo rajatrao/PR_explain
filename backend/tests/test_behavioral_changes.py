@@ -30,7 +30,7 @@ def test_oauth_behavioral_changes_are_outcome_lines_without_calls():
     assert _CALLS.search(blob) is None
     assert _PATH.search(blob) is None
     values = _values(rows)
-    assert "old vs new behavior" in values["Before"].lower()
+    assert "system behavior change" in values["Before"].lower()
     assert "application logic" in values["Now"].lower() or "api" in values["Now"].lower()
     assert values["Conditions"].strip()
     assert values["What observers notice"].strip()

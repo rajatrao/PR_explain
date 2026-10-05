@@ -1,4 +1,4 @@
-"""Old vs New Behavior: before/after statement pairs plus who observes them.
+"""Behavior facts grouped per changed function, plus who reaches them.
 
 Built only from stored facts. ``behavior_changed`` claims carry the summary,
 their ``behavior_before`` / ``behavior_after`` evidence carry the base and head
@@ -14,8 +14,6 @@ from app.explanation.explain_view import explain_skip_symbol
 
 REACH_DEPTH = 4
 REACH_CAP = 12
-COMMENT_SYMBOL_CAP = 10
-COMMENT_CHANGE_CAP = 6
 
 
 def build_behavior_comparison(
@@ -57,7 +55,7 @@ def build_behavior_comparison(
             continue
         path = anchor.file
         name = anchor.symbol
-        category = anchor.description or "logic"
+        category, _guard = _split_description(anchor.description)
         key = (path, name or "")
         if key not in groups:
             symbol = by_key.get((name, path)) if name else None
@@ -69,6 +67,8 @@ def build_behavior_comparison(
                 "claim_id": _id(claim),
                 "category": category,
                 "label": CATEGORY_LABEL.get(category, "Logic"),
+                "before_when": _split_description(before.description)[1] if before else None,
+                "after_when": _split_description(after.description)[1] if after else None,
                 "summary": _summary_text(claim, name or path, path),
                 "before": before.snippet if before else None,
                 "after": after.snippet if after else None,
@@ -88,47 +88,6 @@ def build_behavior_comparison(
         items.append(group)
     items.sort(key=lambda item: (-len(item["reach"]["callers"]), not item["exported"], item["file"], item["name"]))
     return {"summary": _overall_summary(items), "items": items}
-
-
-def render_behavior_comparison_markdown(comparison: dict) -> str:
-    items = comparison.get("items") or []
-    if not items:
-        return ""
-    lines = ["### Old vs New Behavior", "", comparison.get("summary") or ""]
-    for item in items[:COMMENT_SYMBOL_CAP]:
-        lines.append("")
-        badge = " · exported" if item["exported"] else ""
-        if item["removed"]:
-            badge = " · removed"
-        lines.append(f"#### {_code(item['display_name'])} — {_code(item['location'])}{badge}")
-        lines.append("")
-        lines.append("| Aspect | Before (base) | After (head) | What changes |")
-        lines.append("|---|---|---|---|")
-        for change in item["changes"][:COMMENT_CHANGE_CAP]:
-            lines.append(
-                "| "
-                + " | ".join(
-                    [
-                        change["label"],
-                        _cell_code(change["before"]),
-                        _cell_code(change["after"]),
-                        _cell(change["summary"]),
-                    ]
-                )
-                + " |"
-            )
-        hidden = len(item["changes"]) - COMMENT_CHANGE_CAP
-        if hidden > 0:
-            lines.append(f"| … | | | {hidden} more change{'s' if hidden != 1 else ''} in the app |")
-        reach_line = "" if item["removed"] else _reach_markdown(item["reach"])
-        if reach_line:
-            lines.append("")
-            lines.append(reach_line)
-    hidden_items = len(items) - COMMENT_SYMBOL_CAP
-    if hidden_items > 0:
-        lines.append("")
-        lines.append(f"_{hidden_items} more changed function{'s' if hidden_items != 1 else ''} are listed in the app._")
-    return "\n".join(lines).strip()
 
 
 # --- grouping ----------------------------------------------------------------
@@ -153,6 +112,7 @@ def _group(symbol, name: str | None, path: str, category: str, repo, head_sha) -
         "exported": bool(getattr(symbol, "exported", False)) if symbol else False,
         "removed": category == "removed_function",
         "changes": [],
+        "symbol_id": _id(symbol) if symbol is not None else None,
         "_symbol": symbol,
     }
 
@@ -281,54 +241,6 @@ def _overall_summary(items: list[dict]) -> str:
     return text
 
 
-def _reach_markdown(reach: dict) -> str:
-    callers = reach.get("callers") or []
-    parts: list[str] = []
-    if callers:
-        shown = []
-        for caller in callers[:6]:
-            label = _code(caller["name"])
-            if caller["file"]:
-                label += f" ({caller['file']})"
-            if caller["depth"] > 1:
-                label += f" via {_code(caller['via'])}"
-            if caller["entry_point"]:
-                label += " · entry point"
-            shown.append(label)
-        more = len(callers) - 6 + (1 if reach.get("truncated") else 0)
-        tail = f", and {more} more" if more > 0 else ""
-        parts.append("**Who now sees this:** " + "; ".join(shown) + tail + ".")
-    else:
-        parts.append("**Who now sees this:** no stored caller reaches it.")
-    tests = reach.get("tests") or []
-    if tests:
-        parts.append("**Tests:** " + ", ".join(tests[:4]) + ".")
-    else:
-        parts.append("**Tests:** none reference it.")
-    return " ".join(parts)
-
-
-# --- markdown helpers -----------------------------------------------------------
-
-
-def _code(text: str | None) -> str:
-    if not text:
-        return ""
-    fence = "``" if "`" in text else "`"
-    pad = " " if fence == "``" else ""
-    return f"{fence}{pad}{text}{pad}{fence}"
-
-
-def _cell_code(text: str | None) -> str:
-    if text is None:
-        return "—"
-    return _code(text.replace("|", "\\|"))
-
-
-def _cell(text: str | None) -> str:
-    return (text or "").replace("|", "\\|").replace("\n", " ")
-
-
 # --- row/dataclass access ------------------------------------------------------
 
 
@@ -349,3 +261,11 @@ def _rel_target(rel) -> str | None:
 
 def _rel_source(rel) -> str | None:
     return getattr(rel, "source_public_id", None) or getattr(rel, "source_id", None)
+
+
+def _split_description(description: str | None) -> tuple[str, str | None]:
+    """Behavior evidence stores `category` or `category\\nwhen: <condition>`."""
+    text = description or "logic"
+    head, _, rest = text.partition("\n")
+    guard = rest[len("when: "):].strip() if rest.startswith("when: ") else None
+    return head.strip() or "logic", guard or None

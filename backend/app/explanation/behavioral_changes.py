@@ -58,8 +58,8 @@ def _before_text(claims, changed_names: set[str]) -> str:
     if compared:
         noun = "statement" if compared == 1 else "statements"
         return (
-            f"The base commit's version of {compared} changed {noun} is shown side by side "
-            "with the head version under Old vs New Behavior."
+            f"The base commit's behavior for {compared} changed {noun} is summarized "
+            "under System Behavior Change."
         )
     for claim in claims or []:
         if _kind(claim) != "dependency_changed":

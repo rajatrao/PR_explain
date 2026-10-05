@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
-from app.explanation.behavior_comparison import build_behavior_comparison, render_behavior_comparison_markdown
+from app.explanation.behavior_comparison import build_behavior_comparison
+from app.explanation.system_behavior import build_system_behavior, render_system_behavior_markdown
 from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 from app.explanation.behavioral_changes import build_behavioral_changes, render_behavioral_changes_markdown
 from app.explanation.system_impact import build_system_impact_rows, render_system_impact_markdown
@@ -488,14 +489,18 @@ def _append_behavior_comparison(parts: list[str], *, symbols, relationships, cla
         base_sha=base_sha,
         head_sha=head_sha,
     )
+    summary = render_system_behavior_markdown(
+        build_system_behavior(
+            comparison, relationships=relationships or [], evidences=evidence or [], claims=claims or []
+        )
+    )
+    if summary:
+        parts.append(summary)
     flows = render_behavior_flows_markdown(
         build_behavior_flows(comparison, symbols=symbols or [], relationships=relationships or [])
     )
     if flows:
         parts.append(flows)
-    block = render_behavior_comparison_markdown(comparison)
-    if block:
-        parts.append(block)
 
 
 def _append_behavioral_changes(parts: list[str], *, symbols, relationships, claims) -> None:
