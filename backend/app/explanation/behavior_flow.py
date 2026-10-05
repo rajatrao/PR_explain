@@ -28,7 +28,11 @@ _OUTCOMES = ("error", "return", "condition")
 
 
 def build_behavior_flows(comparison: dict, *, symbols, relationships) -> dict:
-    items = [item for item in (comparison.get("items") or []) if item.get("changes")][:ITEM_CAP]
+    items = [
+        item
+        for item in (comparison.get("items") or [])
+        if item.get("changes") and item.get("display_name") not in {"internal helper", "module level"}
+    ][:ITEM_CAP]
     if not items:
         return {"before": "", "after": "", "legend": ""}
     functions = {
@@ -99,9 +103,10 @@ def _draw_item(index: int, item: dict, symbol, callees_of, before: "_Diagram", a
         target = focus if caller["depth"] == 1 else node_of.get((caller["depth"] - 1, caller["via"]))
         if target is None:
             continue
-        css = "entry" if caller.get("entry_point") else "caller"
+        css = "entry" if caller.get("entry_point") and not caller.get("private") else "caller"
+        label = "internal helper" if caller.get("private") else caller["name"]
         for diagram in (before, after):
-            diagram.node(caller_id, caller["name"], css)
+            diagram.node(caller_id, label, css)
             diagram.edge(caller_id, target, "-->", None)
 
     old_calls: list[str] = []

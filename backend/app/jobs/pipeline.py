@@ -10,6 +10,7 @@ from app.analyzer.types import Snapshot
 from app.config import Settings
 from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
+from app.explanation.behavioral_changes import screen_narrative
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
 from app.explanation.select import build_packet
@@ -147,6 +148,11 @@ def execute_explain(
         _fail_explanation(session, run, depth, provider, message, validation.raw_text, head_sha, "validation")
         return
     document = _grounded_document(session, run, depth, settings) or validation.document
+    if depth == "quick":
+        # Keep the model's behavioral narrative only after it is checked against the packet's behavior facts.
+        model_document = validation.document
+        narrative = model_document.behavioral_changes if model_document is not None else None
+        document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts)
     _store_explanation(
         session,
         run,

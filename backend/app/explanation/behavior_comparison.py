@@ -180,8 +180,7 @@ def _reach(symbol, by_id, callers, tests, changed_files) -> dict:
                 seen.add(source_id)
                 caller = by_id.get(source_id)
                 name = caller.name if caller else (getattr(rel, "source_name", None) or source_file)
-                if caller is not None and explain_skip_symbol(caller.name, caller.file_path):
-                    name = "internal helper"
+                private = caller is not None and explain_skip_symbol(caller.name, caller.file_path)
                 if len(found) >= REACH_CAP:
                     truncated = True
                     continue
@@ -194,6 +193,7 @@ def _reach(symbol, by_id, callers, tests, changed_files) -> dict:
                         "via": current_name,
                         "outside_diff": source_file not in changed_files,
                         "entry_point": caller is None or bool(caller.exported) or not upstream,
+                        "private": private,
                     }
                 )
                 if caller is not None:
@@ -203,7 +203,8 @@ def _reach(symbol, by_id, callers, tests, changed_files) -> dict:
             break
     return {
         "callers": found,
-        "entry_points": [item["name"] for item in found if item["entry_point"]],
+        # Private helpers are never reported as entry points of the system.
+        "entry_points": [item["name"] for item in found if item["entry_point"] and not item["private"]],
         "files": sorted({item["file"] for item in found if item["file"]}),
         "outside_diff": sum(1 for item in found if item["outside_diff"]),
         "tests": tests.get(start, []),

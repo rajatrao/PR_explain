@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from app.analyzer.types import AnalysisResult, Snapshot
+from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.schema import (
     ClaimRef,
     ContextNote,
@@ -91,7 +92,16 @@ def build_packet(
         )
 
     selected = _fit(result, snapshot, depth, candidates, notes, budget)
-    return _materialize(result, snapshot, depth, selected, notes)
+    packet = _materialize(result, snapshot, depth, selected, notes)
+    if _slice(depth) == "quick":
+        # Behavior facts carry their own size cap and are added after the claim budget is fitted.
+        packet.behavior_facts = build_behavior_facts(
+            symbols=result.symbols,
+            relationships=result.relationships,
+            claims=result.claims,
+            evidences=result.evidences,
+        )
+    return packet
 
 
 def _slice(depth: str) -> str:
