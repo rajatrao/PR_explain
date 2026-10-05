@@ -119,7 +119,7 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "### Impact" not in details
     assert "- Changed" not in explain
     assert "  - login" not in explain
-    assert "### Change flow" in details
+    assert "### Change flow" not in details
     assert "### Diagram" not in second
     assert "## Diagram" not in second
     assert "```mermaid" not in details
@@ -183,9 +183,8 @@ class _Claim:
 _DETAILS_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
-    "### Change flow",
     "### Shared code",
-    "### Why a file outside the diff matters",
+    "### Callers outside the diff",
     "<summary>Tests</summary>",
     "<summary>Unchanged boundary</summary>",
 ]
@@ -369,7 +368,7 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     explain, rest = body.split("## Details for", 1)
     details, review = rest.split("## Review for", 1)
     assert "### What changed" not in details
-    assert details.index("### Changes") < details.index("### Change flow")
+    assert details.index("### Key Changes") < details.index("### Changes") < details.index("### Shared code")
     assert "<summary>Tests</summary>" in details
     assert "<summary>Unchanged boundary</summary>" in details
     assert details.count("<details>") == 4
@@ -384,23 +383,6 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     assert "<details>" not in explain
     assert "<details>" not in review
     assert "The rest of this file is on the web run page." not in body
-
-
-def test_change_flow_groups_facts_under_each_flow_and_folds_extra_flows():
-    from app.explanation.details import render_details_markdown
-
-    rows = []
-    for n in range(5):
-        label = f"route{n} → handler → createSession"
-        rows.append({"label": label, "value": "What changes: callers must pass ttlMs.", "href": None})
-        rows.append({"label": label, "value": "Call at head: createSession(id) (src/a.ts:9)", "href": "https://x/a.ts#L9"})
-    markdown = render_details_markdown({"sections": [{"title": "Change flow", "rows": rows}]})
-    assert markdown.startswith("### Change flow\n\n- **route0 → handler → createSession**\n")
-    assert "\n  - **What changes:** callers must pass ttlMs.\n" in markdown
-    assert "\n  - **Call at head:** createSession(id) (src/a.ts:9) ([code](https://x/a.ts#L9))" in markdown
-    open_part, folded = markdown.split("<details>", 1)
-    assert open_part.count("- **route") == 3
-    assert "<summary>2 more</summary>" in folded and folded.count("- **route") == 2
 
 
 def test_combined_comment_truncates_large_diffs_and_keeps_paths():

@@ -151,6 +151,7 @@ export type RunDetail = {
         label: string;
         value: string;
         href?: string | null;
+        label_href?: string | null;
         evidence?: string | null;
       }[];
       subsections?: {

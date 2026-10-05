@@ -11,9 +11,8 @@ _TITLES = [
     "Key Changes",
     "Risk Areas",
     "What changed",
-    "Change flow",
     "Shared code",
-    "Why a file outside the diff matters",
+    "Callers outside the diff",
     "Tests",
     "Unchanged boundary",
     "Reviewer Attention",
@@ -23,9 +22,8 @@ _TITLES = [
 _COMMENT_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
-    "### Change flow",
     "### Shared code",
-    "### Why a file outside the diff matters",
+    "### Callers outside the diff",
     "<summary>Tests</summary>",
     "<summary>Unchanged boundary</summary>",
     "### Reviewer Attention",
@@ -117,7 +115,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
         if row["value"].startswith("reaches changed symbol"):
             assert "unchanged" not in row["value"]
     assert any(row["value"] == "does not reach a changed symbol" for row in rows["Unchanged boundary"])
-    assert any(row["label"].endswith(".ts") for row in rows["Why a file outside the diff matters"])
+    assert any(row["label"].endswith(".ts") for row in rows["Callers outside the diff"])
 
     body = render_combined_comment(
         document=ExplanationDocument(summary="createSession changed."),
@@ -164,7 +162,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "Change Overview" not in details
     assert "### Unknowns" not in details
     assert "| Area | Names |" in details
-    assert "| Change | Location |" in details
+    assert "| Function | What it means for callers |" in details
     assert "| Where | Why look |" in details
     assert "### Behavior Changes" not in details
     assert "### Behavioral Changes" in explain

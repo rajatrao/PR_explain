@@ -200,19 +200,3 @@ def test_review_diagram_marks_changed_new_removed_and_error_paths():
     # The resolved callee and the spelling in the diff are one node, not two.
     assert "d_record[" not in chart
 
-
-def test_flow_rows_follow_entry_point_to_changed_function():
-    from app.explanation.flow_review import build_flow_rows
-
-    symbols, relationships, claims, evidences = _facts()
-    rows = build_flow_rows(
-        symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo="acme/shop", sha="b" * 40
-    )
-    labels = [row["label"] for row in rows]
-    assert labels[0] == "post_checkout → checkout → charge"
-    values = [row["value"] for row in rows if row["label"] == labels[0]]
-    assert values[0].startswith("What changes: ")
-    assert any(v.startswith("Errors: ") for v in values)
-    assert values[-1] == "Tests: no test references the changed function."
-    # legacy_refund is removed and has no stored caller, so it is listed once at the end.
-    assert rows[-1]["label"] == "Not reached from a stored caller" and "legacy_refund" in rows[-1]["value"]
