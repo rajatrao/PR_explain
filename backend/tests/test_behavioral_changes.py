@@ -2,74 +2,193 @@ import re
 
 from app.analyzer.analyze import analyze
 from app.analyzer.fixture import load_oauth_snapshot
-from app.explanation.behavioral_changes import build_behavioral_changes, render_behavioral_changes_markdown
+from app.explanation.behavior_facts import build_behavior_facts
+from app.explanation.behavioral_changes import (
+    build_behavioral_section,
+    render_behavioral_changes_markdown,
+    screen_narrative,
+    summarize_facts,
+)
+from app.explanation.schema import (
+    BehaviorChangeFact,
+    BehavioralNarrative,
+    BehaviorFunctionFact,
+    ExplanationDocument,
+)
 from app.github.comment import render_combined_comment
-from app.explanation.schema import ExplanationDocument
-
 
 _PATH = re.compile(r"(?<![A-Za-z0-9_])(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+")
-_CALLS = re.compile(r"\bcalls\b", re.I)
 
 
-def _values(rows):
-    return {row["label"]: row["value"] for row in rows}
+def _facts():
+    return [
+        BehaviorFunctionFact(
+            function="charge",
+            file="app/billing.py",
+            public=True,
+            reached_from=["post_checkout"],
+            callers_at_head=["checkout → charge(cart.order)"],
+            changes=[
+                BehaviorChangeFact(
+                    id="b1",
+                    claim_id="c1",
+                    kind="error",
+                    before='raise ValueError("empty order")',
+                    after='raise InvalidOrder("negative total")',
+                    before_when="total <= 0",
+                    after_when="total < 0",
+                ),
+                BehaviorChangeFact(
+                    id="b2", claim_id="c2", kind="return", before=None, after="return None", after_when="total == 0"
+                ),
+                BehaviorChangeFact(id="b3", claim_id="c3", kind="call", before=None, after="audit.record(order.id)"),
+            ],
+        ),
+        BehaviorFunctionFact(
+            function="_fee_for",
+            file="app/billing.py",
+            public=False,
+            reached_from=["post_checkout"],
+            changes=[
+                BehaviorChangeFact(id="b4", claim_id="c4", kind="value", before="rate = 0.02", after="rate = 0.03"),
+            ],
+        ),
+    ]
 
 
-def test_oauth_behavioral_changes_are_outcome_lines_without_calls():
+def _good_narrative():
+    return BehavioralNarrative(
+        overview="Checkout now rejects only negative totals and treats an empty order as a no-op.",
+        changes=[
+            {
+                "title": "Empty and negative orders at checkout",
+                "before": "Previously, an order with total <= 0 was rejected with ValueError.",
+                "after": "With this change, only total < 0 fails, with InvalidOrder; a zero total returns None without charging.",
+                "impact": "Anything entering through `post_checkout`.",
+                "fact_ids": ["b1", "b2"],
+            },
+            {
+                "title": "Audit trail for charges",
+                "before": "Previously, charging an order left no audit record.",
+                "after": "With this change, every charge also runs `audit.record`.",
+                "impact": "",
+                "fact_ids": ["b3"],
+            },
+        ],
+        watch=[{"text": "Do callers of `post_checkout` expect None for empty orders?", "fact_ids": ["b2"]}],
+    )
+
+
+def test_grounded_model_narrative_is_kept():
+    screened = screen_narrative(_good_narrative(), _facts())
+    assert screened is not None
+    assert [change.title for change in screened.changes] == [
+        "Empty and negative orders at checkout",
+        "Audit trail for charges",
+    ]
+    assert screened.watch[0].text.startswith("Do callers")
+    section = build_behavioral_section(narrative=_good_narrative(), facts=_facts())
+    assert section["source"] == "model"
+    markdown = render_behavioral_changes_markdown(section)
+    assert "**Before:** Previously, an order with total <= 0 was rejected with ValueError." in markdown
+    assert "Narrated by the configured model from 4 before-and-after facts" in markdown
+
+
+def test_narrative_items_that_go_beyond_their_facts_are_dropped():
+    narrative = _good_narrative()
+    narrative.changes.extend(
+        [
+            # Names a function that is not in the facts.
+            {
+                "title": "Refunds",
+                "before": "Previously, refunds went through `issue_refund`.",
+                "after": "With this change, they go through `refund_v2`.",
+                "fact_ids": ["b3"],
+            },
+            # Cites no known fact.
+            {"title": "Caching", "before": "Previously, no cache.", "after": "Now cached.", "fact_ids": ["b99"]},
+            # Names a private helper.
+            {
+                "title": "Fees",
+                "before": "Previously, `_fee_for` used 0.02.",
+                "after": "With this change, it uses 0.03.",
+                "fact_ids": ["b4"],
+            },
+            # Lists code edits instead of behavior.
+            {
+                "title": "Charge",
+                "before": "Previously, the old code ran.",
+                "after": "Added a new function to charge orders.",
+                "fact_ids": ["b1"],
+            },
+            # Asserts a defect.
+            {"title": "Audit", "before": "Previously, fine.", "after": "This is broken.", "fact_ids": ["b3"]},
+        ]
+    )
+    narrative.changes = [
+        change if isinstance(change, type(narrative.changes[0])) else type(narrative.changes[0]).model_validate(change)
+        for change in narrative.changes
+    ]
+    screened = screen_narrative(narrative, _facts())
+    assert [change.title for change in screened.changes] == [
+        "Empty and negative orders at checkout",
+        "Audit trail for charges",
+    ]
+
+
+def test_private_helper_change_is_described_by_value_not_name():
+    narrative = BehavioralNarrative(
+        changes=[
+            {
+                "title": "Checkout fee rate",
+                "before": "Previously, the fee rate applied at checkout was `0.02`.",
+                "after": "With this change, it is `0.03`.",
+                "impact": "Anything entering through `post_checkout`.",
+                "fact_ids": ["b4"],
+            }
+        ]
+    )
+    screened = screen_narrative(narrative, _facts())
+    assert screened is not None and screened.changes[0].title == "Checkout fee rate"
+
+
+def test_unusable_narrative_falls_back_to_fact_summary():
+    narrative = BehavioralNarrative(
+        changes=[{"title": "X", "before": "Previously, `made_up`.", "after": "Now `other`.", "fact_ids": ["b1"]}]
+    )
+    section = build_behavioral_section(narrative=narrative, facts=_facts())
+    assert section["source"] == "facts"
+    titles = [change["title"] for change in section["changes"]]
+    assert titles == ["Requests that go through `charge`", "Requests entering through `post_checkout`"]
+    charge = section["changes"][0]
+    assert charge["before"].startswith("Previously, `charge` failed with ValueError when `total <= 0`")
+    assert "stops early and returns `None` when `total == 0`" in charge["after"]
+    assert "also runs `audit.record`" in charge["after"]
+    helper = section["changes"][1]
+    assert "_fee_for" not in helper["before"] + helper["after"] + helper["title"]
+    assert "`rate` is `0.03`" in helper["after"]
+
+
+def test_fact_summary_never_lists_paths():
+    summary = summarize_facts(_facts())
+    blob = " ".join([summary.overview] + [c.before + c.after + c.title + c.impact for c in summary.changes])
+    assert _PATH.search(blob) is None
+
+
+def test_oauth_facts_and_summary():
     result = analyze(load_oauth_snapshot())
-    rows = build_behavioral_changes(
+    facts = build_behavior_facts(
         symbols=result.symbols,
         relationships=result.relationships,
         claims=result.claims,
+        evidences=result.evidences,
     )
-    labels = [row["label"] for row in rows]
-    assert labels == ["Before", "Now", "Conditions", "What observers notice"]
-    blob = render_behavioral_changes_markdown(rows)
-    assert "### Behavioral Changes" in blob
-    assert "| Call |" not in blob
-    assert _CALLS.search(blob) is None
-    assert _PATH.search(blob) is None
-    values = _values(rows)
-    assert "system flow change" in values["Before"].lower()
-    assert "application logic" in values["Now"].lower() or "api" in values["Now"].lower()
-    assert values["Conditions"].strip()
-    assert values["What observers notice"].strip()
-
-
-def test_behavioral_changes_hide_private_python():
-    class _Symbol:
-        def __init__(self, name, file_path, *, changed=True):
-            self.kind = "function"
-            self.name = name
-            self.file_path = file_path
-            self.changed = changed
-
-    class _Claim:
-        def __init__(self, kind, subject, text):
-            self.kind = kind
-            self.subject = subject
-            self.text = text
-
-    symbols = [
-        _Symbol("create_llm_provider", "backend/app/llm/provider.py"),
-        _Symbol("_configured", "backend/app/llm/provider.py"),
-    ]
-    claims = [
-        _Claim("symbol_changed", "create_llm_provider", "create_llm_provider changed in backend/app/llm/provider.py."),
-        _Claim("defines_api", "create_llm_provider", "create_llm_provider is an exported API."),
-        _Claim(
-            "reaches_changed",
-            "backend/app/worker.py",
-            "backend/app/worker.py reaches changed symbol _configured, create_llm_provider.",
-        ),
-        _Claim("missing_test", "create_llm_provider", "No test references create_llm_provider."),
-    ]
-    rows = build_behavioral_changes(symbols=symbols, relationships=[], claims=claims)
-    blob = " ".join(row["value"] for row in rows)
-    assert "_configured" not in blob
-    assert "create_llm_provider" not in blob
-    assert "worker.py" not in blob
-    assert _CALLS.search(blob) is None
+    session = next(fact for fact in facts if fact.function == "createSession")
+    assert {change.kind for change in session.changes} >= {"signature", "return"}
+    section = build_behavioral_section(narrative=None, facts=facts)
+    markdown = render_behavioral_changes_markdown(section)
+    assert "callers must pass `ttlMs`" in markdown
+    assert _PATH.search(markdown) is None
 
 
 def test_combined_comment_puts_behavioral_on_explain_not_details():
@@ -95,8 +214,6 @@ def test_combined_comment_puts_behavioral_on_explain_not_details():
     explain, rest = body.split("## Details for", 1)
     details = rest.split("## Review for", 1)[0]
     assert "### Behavioral Changes" in explain
-    assert "### Behavior Changes" not in body
     assert "### Behavioral Changes" not in details
-    assert "### Change flow" not in explain
+    assert "### System Flow Change" not in body
     assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
-    assert _CALLS.search(explain.split("### Behavioral Changes", 1)[1].split("##", 1)[0]) is None

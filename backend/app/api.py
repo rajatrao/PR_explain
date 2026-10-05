@@ -23,8 +23,8 @@ from app.explanation.changes import build_file_changes
 from app.github.patches import fetch_compare_patches
 from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
-from app.explanation.system_flow import build_system_flow
-from app.explanation.behavioral_changes import build_behavioral_changes
+from app.explanation.behavior_facts import build_behavior_facts
+from app.explanation.behavioral_changes import build_behavioral_section
 from app.explanation.system_impact import build_system_impact_rows
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
@@ -398,29 +398,25 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             )
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
-        "system_flow": build_system_flow(
-            behavior := build_behavior_comparison(
+        "behavioral_changes": build_behavioral_section(
+            narrative=_quick_narrative(explanations),
+            facts=build_behavior_facts(
                 symbols=run.symbols,
                 relationships=run.relationships_,
                 claims=run.claims,
                 evidences=run.evidences,
-                repo=repository.full_name,
-                base_sha=revision.base_sha,
-                head_sha=revision.head_sha,
             ),
-            relationships=run.relationships_,
-            evidences=run.evidences,
-            claims=run.claims,
+            prescreened=True,
         ),
         "behavior_flows": build_behavior_flows(
-            behavior,
+            build_behavior_comparison(
+                symbols=run.symbols,
+                relationships=run.relationships_,
+                claims=run.claims,
+                evidences=run.evidences,
+            ),
             symbols=run.symbols,
             relationships=run.relationships_,
-        ),
-        "behavioral_changes": build_behavioral_changes(
-            symbols=run.symbols,
-            relationships=run.relationships_,
-            claims=run.claims,
         ),
         "system_impact": build_system_impact_rows(
             symbols=run.symbols,
@@ -454,6 +450,16 @@ def _patches_for_run(run: AnalysisRun) -> dict[str, str]:
         revision.head_sha,
         repository.installation_id,
     )
+
+
+def _quick_narrative(explanations: dict) -> dict | None:
+    """The screened behavioral narrative stored with the Quick explanation, when it succeeded."""
+    quick = explanations.get("quick") or {}
+    document = quick.get("document") if quick.get("status") == "succeeded" else None
+    if not isinstance(document, dict):
+        return None
+    narrative = document.get("behavioral_changes")
+    return narrative if isinstance(narrative, dict) else None
 
 
 def _document_texts(explanations: dict, field: str) -> list[str]:

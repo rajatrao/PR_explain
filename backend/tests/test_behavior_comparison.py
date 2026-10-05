@@ -2,7 +2,6 @@ from app.analyzer.analyze import _behavior_claims
 from app.analyzer.behavior import extract_behavior_deltas
 from app.analyzer.types import Claim, Evidence, FileChange, Relationship, Snapshot, Symbol
 from app.explanation.behavior_comparison import build_behavior_comparison
-from app.explanation.system_flow import build_system_flow, render_system_flow_markdown
 from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 
 PATCH = """@@ -10,12 +10,15 @@ def charge(order, retries=3):
@@ -157,85 +156,6 @@ def test_comparison_groups_changes_and_walks_callers_upstream():
 
 
 
-def _flow_summary(symbols, relationships, claims, evidences):
-    comparison = build_behavior_comparison(symbols=symbols, relationships=relationships, claims=claims, evidences=evidences)
-    return build_system_flow(comparison, relationships=relationships, evidences=evidences, claims=claims)
-
-
-def test_system_flow_groups_changes_by_entry_point_flow():
-    symbols, relationships, claims, evidences = _facts()
-    summary = _flow_summary(symbols, relationships, claims, evidences)
-    flow = summary["flows"][0]
-    assert flow["title"] == "Flow: `post_checkout` → `charge`"
-    assert flow["paths"] == ["`post_checkout` → `checkout` → `charge`"]
-    effects = {(e["label"], e["before"], e["after"]) for e in flow["effects"]}
-    assert (
-        "Contract",
-        "Callers enter through `charge(order, retries)`.",
-        "Callers enter through `charge(order, retries, currency)`. New parameter: `currency` (optional). "
-        "Default of `retries` changes from `3` to `5`.",
-    ) in effects
-    assert (
-        "Failure mode",
-        "The flow fails at `charge` with ValueError when `total <= 0`.",
-        "It fails there with InvalidOrder when `total < 0`.",
-    ) in effects
-    assert any(label == "Early exit" and "when `total == 0`" in after for label, _b, after in effects)
-    assert ("Outbound call", "The flow does not reach `audit.record` from `charge`.", "`charge` now calls `audit.record`.") in effects
-    assert ("Outbound call", "`charge` calls `logger.info`.", "The flow no longer reaches `logger.info` from `charge`.") in effects
-    # Branch conditions that guard a failure or exit are not repeated as separate decisions.
-    assert not any(label == "Decision" for label, _b, _a in effects)
-    removed = summary["flows"][1]
-    assert removed["title"] == "Removed from the system: `legacy_refund`"
-    assert "1 entry point (`post_checkout`)" in summary["headline"]
-    assert summary["focus"] == ["No stored test references `charge`, and this flow's contract changes there."]
-
-    markdown = render_system_flow_markdown(summary)
-    assert "### System Flow Change" in markdown
-    assert "| | Before this PR | After this PR |" in markdown
-    assert "**Blast radius:** Reaches 1 entry point" in markdown
-    # Flow-level only: no file-by-file sections and no raw statements.
-    assert "app/billing.py" not in markdown
-    assert "def charge" not in markdown and 'raise ValueError("empty order")' not in markdown
-
-
-def test_contract_change_is_checked_against_head_call_sites():
-    symbols, relationships, claims, evidences = _facts()
-    checkout = next(s for s in symbols if s.name == "checkout")
-    charge = next(s for s in symbols if s.name == "charge")
-    route = next(s for s in symbols if s.name == "post_checkout")
-    evidences.append(
-        Evidence(
-            id="ev_call_checkout",
-            type="source_span",
-            repo="acme/shop",
-            commit_sha="b" * 40,
-            file="app/cart.py",
-            start_line=7,
-            end_line=7,
-            symbol="charge",
-            description="checkout calls charge in app/cart.py.",
-            snippet="    receipt = charge()",
-        )
-    )
-    relationships[0] = Relationship(
-        id="r1",
-        type="CALLS",
-        source_id=checkout.id,
-        target_id=charge.id,
-        source_name="checkout",
-        target_name="charge",
-        source_file="app/cart.py",
-        target_file="app/billing.py",
-        evidence_id="ev_call_checkout",
-    )
-    del route
-    summary = _flow_summary(symbols, relationships, claims, evidences)
-    contract = next(e for e in summary["flows"][0]["effects"] if e["label"] == "Contract")
-    assert contract["after"].endswith("1 of 1 call site at head pass a different number of arguments.")
-    assert "`checkout` calls `charge()` with 0 arguments; `charge` now declares 1 required." in summary["focus"]
-
-
 def test_old_and_new_flow_diagrams_mark_side_only_edges():
     symbols, relationships, claims, evidences = _facts()
     comparison = build_behavior_comparison(
@@ -260,7 +180,5 @@ def test_old_and_new_flow_diagrams_mark_side_only_edges():
 def test_no_behavior_claims_means_no_sections():
     comparison = build_behavior_comparison(symbols=[], relationships=[], claims=[], evidences=[])
     assert comparison["items"] == []
-    summary = build_system_flow(comparison, relationships=[], evidences=[], claims=[])
-    assert render_system_flow_markdown(summary) == ""
     flows = build_behavior_flows(comparison, symbols=[], relationships=[])
     assert render_behavior_flows_markdown(flows) == ""

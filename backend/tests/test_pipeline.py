@@ -507,3 +507,65 @@ def test_queued_run_with_failed_analyze_job_exposes_retry(db):
     stored = db.get(AnalysisJob, job.id)
     assert stored.status == "pending"
     assert stored.last_error is None
+
+
+class _NarratingProvider:
+    """Returns the packet document plus a behavioral narrative: one grounded change, one invented."""
+
+    id = "fake"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.packets = []
+
+    def explain(self, request):  # noqa: ANN001
+        self.calls += 1
+        self.packets.append(request.packet)
+        from app.explanation.narrate import compose_document
+
+        document = compose_document(request.packet).model_dump(mode="json")
+        facts = request.packet.behavior_facts
+        session = next(fact for fact in facts if fact.function == "createSession")
+        ids = [change.id for change in session.changes]
+        document["behavioral_changes"] = {
+            "overview": "Session tokens now carry the caller's TTL.",
+            "changes": [
+                {
+                    "title": "Session token format",
+                    "before": "Previously, a session token was built from the user id alone.",
+                    "after": "With this change, each caller must supply `ttlMs`, and the TTL becomes part of the token.",
+                    "impact": "Anything entering through `login`, `googleCallback` or `refreshToken`.",
+                    "fact_ids": ids,
+                },
+                {
+                    "title": "Session cache",
+                    "before": "Previously, sessions were cached in `redisClient`.",
+                    "after": "With this change, they are not cached.",
+                    "fact_ids": ids,
+                },
+            ],
+            "watch": [],
+        }
+        return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
+
+
+def test_model_behavioral_narrative_is_screened_and_shown(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    provider = _NarratingProvider()
+    comments = MemoryComments()
+    process_available_job(db, settings, snapshot_source=source, provider=provider)
+    process_available_job(db, settings, snapshot_source=source, provider=provider, comment_client=comments)
+    assert provider.calls == 1
+    assert provider.packets[0].behavior_facts, "the quick packet carries behavior facts"
+
+    client = TestClient(app)
+    body = client.get(f"/api/runs/{run.id}").json()
+    section = body["behavioral_changes"]
+    assert section["source"] == "model"
+    assert [change["title"] for change in section["changes"]] == ["Session token format"]
+    posted = comments.bodies[-1]
+    assert "**Session token format**" in posted
+    assert "redisClient" not in posted

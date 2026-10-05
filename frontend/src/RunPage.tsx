@@ -7,8 +7,7 @@ import type {
   Epistemic,
   FileChange,
   RunDetail,
-  SystemFlow,
-  SystemFlowFamily,
+  BehavioralChanges,
 } from "./types";
 
 mermaid.initialize({
@@ -192,9 +191,8 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
-              <SystemFlowSection summary={run.system_flow} />
+              <BehavioralChangesSection section={run.behavioral_changes} />
               <BehaviorFlowsSection flows={run.behavior_flows} />
-              <BehavioralChangesSection rows={run.behavioral_changes ?? []} />
               <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
               <section className="narrative">
                 <h2>Summary</h2>
@@ -535,98 +533,6 @@ function BehaviorFlowsSection({ flows }: { flows?: BehaviorFlows }) {
   );
 }
 
-function SystemFlowSection({ summary }: { summary?: SystemFlow }) {
-  const flows = summary?.flows ?? [];
-  if (flows.length === 0) return null;
-  const radius = [summary?.blast_radius, summary?.unaffected, summary?.partial].filter(Boolean).join(" ");
-  const skipped = summary?.not_summarized ?? 0;
-  return (
-    <section className="narrative system-flow">
-      <h3>System Flow Change</h3>
-      {summary?.headline ? (
-        <p className="behavior-summary">
-          <InlineCode text={summary.headline} />
-        </p>
-      ) : null}
-      {flows.map((flow) => (
-        <SystemFlowCard key={flow.title} flow={flow} />
-      ))}
-      {radius ? (
-        <div className="behavior-reach">
-          <span className="detail-label">Blast radius</span>
-          <span>{radius}</span>
-        </div>
-      ) : null}
-      {summary?.focus?.length ? (
-        <div className="flow-focus">
-          <h4>Review focus</h4>
-          <ul>
-            {summary.focus.map((line) => (
-              <li key={line}>
-                <InlineCode text={line} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {skipped ? (
-        <p className="kicker">
-          {skipped} other statement change{skipped === 1 ? " is" : "s are"} in the diff but not summarized here.
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-function SystemFlowCard({ flow }: { flow: SystemFlowFamily }) {
-  return (
-    <div className={flow.removed_only ? "behavior-card removed" : "behavior-card"}>
-      <div className="behavior-card-head">
-        <span className="behavior-name">
-          <InlineCode text={flow.title} />
-        </span>
-      </div>
-      {flow.paths.length ? (
-        <ul className="flow-paths">
-          {flow.paths.map((path) => (
-            <li key={path}>
-              <InlineCode text={path} />
-            </li>
-          ))}
-          {flow.more_paths ? <li className="kicker">… and {flow.more_paths} more</li> : null}
-        </ul>
-      ) : null}
-      <table className="behavior-table">
-        <thead>
-          <tr>
-            <th className="behavior-aspect">What</th>
-            <th>Before this PR</th>
-            <th>After this PR</th>
-          </tr>
-        </thead>
-        <tbody>
-          {flow.effects.map((effect, index) => (
-            <tr key={`${index}-${effect.after}`}>
-              <td className="behavior-aspect">{effect.label}</td>
-              <td className="behavior-before">
-                <InlineCode text={effect.before} />
-              </td>
-              <td className="behavior-after">
-                <InlineCode text={effect.after} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {flow.removed_only ? null : (
-        <p className="kicker flow-tests">
-          Tests on this flow: {flow.tests.length ? flow.tests.join(", ") : "no stored test references the changed code"}.
-        </p>
-      )}
-    </div>
-  );
-}
-
 /** Render `code` spans inside a sentence without interpreting any other markup. */
 function InlineCode({ text }: { text: string }) {
   const parts = text.split(/(``\s.+?\s``|`[^`]+`)/g);
@@ -641,8 +547,65 @@ function InlineCode({ text }: { text: string }) {
   );
 }
 
-function BehavioralChangesSection({ rows }: { rows: { label: string; value: string }[] }) {
-  return <LabeledExplainSection title="Behavioral Changes" rows={rows} />;
+function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) {
+  if (!section) return null;
+  const changes = section.changes ?? [];
+  return (
+    <section className="narrative behavioral-changes">
+      <h3>Behavioral Changes</h3>
+      {section.overview ? (
+        <p className="behavior-summary">
+          <InlineCode text={section.overview} />
+        </p>
+      ) : null}
+      {changes.length === 0 && !section.overview ? <p>The diff shows no statement-level behavior change.</p> : null}
+      {changes.map((change, index) => (
+        <div className="behavior-card" key={`${index}-${change.title}`}>
+          <h4 className="behavior-title">
+            <InlineCode text={change.title} />
+          </h4>
+          <div className="behavior-compare">
+            <div className="behavior-before">
+              <span className="detail-label">Before</span>
+              <p>
+                <InlineCode text={change.before} />
+              </p>
+            </div>
+            <div className="behavior-after">
+              <span className="detail-label">After</span>
+              <p>
+                <InlineCode text={change.after} />
+              </p>
+            </div>
+          </div>
+          {change.impact ? (
+            <p className="behavior-impact">
+              <span className="detail-label">Who notices</span> <InlineCode text={change.impact} />
+            </p>
+          ) : null}
+        </div>
+      ))}
+      {section.watch?.length ? (
+        <div className="flow-focus">
+          <h4>Worth checking</h4>
+          <ul>
+            {section.watch.map((item) => (
+              <li key={item}>
+                <InlineCode text={item} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {changes.length ? (
+        <p className="kicker">
+          {section.source === "model"
+            ? `Narrated by the configured model from ${section.fact_count} before-and-after facts in the diff; every item was checked against the facts it cites.`
+            : `Summarized directly from ${section.fact_count} before-and-after facts in the diff.`}
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 function DetailsView({ run }: { run: RunDetail }) {

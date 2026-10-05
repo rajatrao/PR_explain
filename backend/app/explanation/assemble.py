@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.explanation.schema import ExplanationDepth, ExplanationDocument, ExplanationPacket
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _BLOCKS = (
     "REPOSITORY FACTS",
@@ -13,6 +13,7 @@ _BLOCKS = (
     "EVIDENCE",
     "IMPACT ANALYSIS",
     "UNKNOWN INFORMATION",
+    "BEHAVIOR FACTS",
     "TASK",
     "OUTPUT SCHEMA",
 )
@@ -50,6 +51,7 @@ def build_user_message(
             "context_notes": [item.model_dump() for item in packet.context_notes],
             "tests": [item.model_dump() for item in packet.tests],
         },
+        "BEHAVIOR FACTS": [item.model_dump() for item in packet.behavior_facts],
         "TASK": depth_task(packet.depth),
         "OUTPUT SCHEMA": ExplanationDocument.model_json_schema(),
     }

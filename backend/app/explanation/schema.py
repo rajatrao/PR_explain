@@ -104,6 +104,36 @@ class ContextNote(BaseModel):
     text: str
 
 
+class BehaviorChangeFact(BaseModel):
+    """One before/after statement pair read from the diff."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    claim_id: str
+    kind: str
+    before: str | None = None
+    after: str | None = None
+    before_when: str | None = None
+    after_when: str | None = None
+
+
+class BehaviorFunctionFact(BaseModel):
+    """A changed function, who reaches it at the head commit, and its statement-level changes."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    function: str
+    file: str = ""
+    public: bool
+    removed: bool = False
+    reached_from: list[str] = Field(default_factory=list)
+    callers_at_head: list[str] = Field(default_factory=list)
+    tests: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    changes: list[BehaviorChangeFact] = Field(default_factory=list)
+
+
 class ExplanationPacket(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -117,6 +147,7 @@ class ExplanationPacket(BaseModel):
     evidence: list[EvidenceRef] = Field(default_factory=list)
     unknowns: list[UnknownRef] = Field(default_factory=list)
     context_notes: list[ContextNote] = Field(default_factory=list)
+    behavior_facts: list[BehaviorFunctionFact] = Field(default_factory=list)
 
 
 class Statement(BaseModel):
@@ -126,6 +157,33 @@ class Statement(BaseModel):
     text: str
     claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
+
+
+class BehaviorChangeNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    before: str
+    after: str
+    impact: str = ""
+    fact_ids: list[str] = Field(default_factory=list)
+
+
+class BehaviorWatchNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    fact_ids: list[str] = Field(default_factory=list)
+
+
+class BehavioralNarrative(BaseModel):
+    """What the system does differently, written from behavior facts only."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    overview: str = ""
+    changes: list[BehaviorChangeNote] = Field(default_factory=list)
+    watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
 class ExplanationDocument(BaseModel):
@@ -139,6 +197,7 @@ class ExplanationDocument(BaseModel):
     unchanged: list[Statement] = Field(default_factory=list)
     unknowns: list[Statement] = Field(default_factory=list)
     review_questions: list[Statement] = Field(default_factory=list)
+    behavioral_changes: BehavioralNarrative | None = None
 
     def statements(self) -> list[Statement]:
         return [
