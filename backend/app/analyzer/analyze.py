@@ -5,6 +5,7 @@ import posixpath
 import re
 from collections.abc import Callable
 
+from app.analyzer.behavior import extract_behavior_deltas
 from app.analyzer.diff import added_lines, overlaps
 from app.analyzer.parse import (
     CallSite,
@@ -384,6 +385,8 @@ def analyze(
                 subject=symbol.name,
                 evidence_ids=[evidence.id],
             )
+
+    _behavior_claims(snapshot, functions, add_claim, add_evidence)
 
     for path in sorted(change_lines):
         if path not in snapshot.files and not any(change.path == path for change in snapshot.changes):
@@ -913,4 +916,49 @@ def _dependency_claims(snapshot, change_lines, add_claim, add_rel, add_evidence,
             source_file="package.json",
             target_file="package.json",
             evidence_id=evidence.id,
+        )
+
+
+def _behavior_claims(snapshot: Snapshot, functions: list[Symbol], add_claim, add_evidence) -> None:
+    """One FACT claim per old-versus-new statement pair, with a base and a head evidence span."""
+    deltas = extract_behavior_deltas(snapshot.changes, functions, skip_path=lambda path: is_test_path(path) or _skipped(path))
+    for index, delta in enumerate(deltas):
+        owner = delta.symbol or delta.file_path
+        slug = f"{_slug(delta.file_path)}_{_slug(owner)}_{index}"
+        evidence_ids: list[str] = []
+        if delta.before is not None:
+            before = add_evidence(
+                id=f"ev_behavior_before_{slug}",
+                type="behavior_before",
+                repo=snapshot.repository,
+                commit_sha=snapshot.base_sha,
+                file=delta.file_path,
+                start_line=delta.before_line,
+                end_line=delta.before_line,
+                symbol=delta.symbol,
+                description=delta.category,
+                snippet=delta.before,
+            )
+            evidence_ids.append(before.id)
+        if delta.after is not None:
+            after = add_evidence(
+                id=f"ev_behavior_after_{slug}",
+                type="behavior_after",
+                repo=snapshot.repository,
+                commit_sha=snapshot.head_sha,
+                file=delta.file_path,
+                start_line=delta.after_line,
+                end_line=delta.after_line,
+                symbol=delta.symbol,
+                description=delta.category,
+                snippet=delta.after,
+            )
+            evidence_ids.append(after.id)
+        add_claim(
+            id=f"cl_behavior_{slug}",
+            epistemic="FACT",
+            kind="behavior_changed",
+            text=f"{owner} in {delta.file_path}: {delta.summary}",
+            subject=owner,
+            evidence_ids=evidence_ids,
         )

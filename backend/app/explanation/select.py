@@ -19,6 +19,7 @@ from app.explanation.schema import (
 
 _PRIORITY = {
     "symbol_changed": 1,
+    "behavior_changed": 2,
     "file_changed": 1,
     "changed_symbol_cap": 1,
     "diff_only": 1,
@@ -49,6 +50,7 @@ _INCLUDED = {
     },
     "deep": {
         "symbol_changed",
+        "behavior_changed",
         "file_changed",
         "calls",
         "tests",

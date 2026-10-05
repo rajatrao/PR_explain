@@ -54,6 +54,13 @@ def _row(label: str, value: str) -> dict:
 
 def _before_text(claims, changed_names: set[str]) -> str:
     del changed_names
+    compared = sum(1 for claim in claims or [] if _kind(claim) == "behavior_changed")
+    if compared:
+        noun = "statement" if compared == 1 else "statements"
+        return (
+            f"The base commit's version of {compared} changed {noun} is shown side by side "
+            "with the head version under Old vs New Behavior."
+        )
     for claim in claims or []:
         if _kind(claim) != "dependency_changed":
             continue

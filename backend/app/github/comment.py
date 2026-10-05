@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
+from app.explanation.behavior_comparison import build_behavior_comparison, render_behavior_comparison_markdown
+from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 from app.explanation.behavioral_changes import build_behavioral_changes, render_behavioral_changes_markdown
 from app.explanation.system_impact import build_system_impact_rows, render_system_impact_markdown
 from app.explanation.details import build_details, render_details_markdown
@@ -51,6 +53,8 @@ def render_pull_request_comment(
     claims=None,
     symbols=None,
     relationships=None,
+    evidence=None,
+    base_sha: str | None = None,
 ) -> str:
     marker = explain_marker(repo_full_name, pr_number)
     heading = f"## Explain for `{head_sha}`"
@@ -60,6 +64,10 @@ def render_pull_request_comment(
     story = _bullet_block(bullets) or document.summary.strip()
     parts = [marker, heading, ""]
     _append_mermaid(parts, mermaid)
+    _append_behavior_comparison(
+        parts, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence,
+        repo=repo_full_name, base_sha=base_sha, head_sha=head_sha,
+    )
     _append_behavioral_changes(parts, symbols=symbols, relationships=relationships, claims=claims)
     _append_system_impact(parts, symbols=symbols, relationships=relationships, claims=claims)
     if story:
@@ -143,6 +151,7 @@ def render_combined_comment(
     document_unknowns: list[str] | None = None,
     review_questions: list[str] | None = None,
     patches: dict[str, str] | None = None,
+    base_sha: str | None = None,
 ) -> str:
     """One comment: Explain, then Details, then Review. The head SHA is in each heading."""
     del evidence_by_id
@@ -174,6 +183,10 @@ def render_combined_comment(
     explain_parts = [marker, explain_heading, ""]
     _append_mermaid(explain_parts, mermaid)
     flow_parts: list[str] = []
+    _append_behavior_comparison(
+        flow_parts, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence,
+        repo=repo_full_name, base_sha=base_sha, head_sha=head_sha,
+    )
     _append_behavioral_changes(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
     _append_system_impact(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
     if story:
@@ -463,6 +476,26 @@ def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
     if not text:
         return
     parts.append("### Change flow\n\n" + _flow_markdown(text))
+
+
+def _append_behavior_comparison(parts: list[str], *, symbols, relationships, claims, evidence, repo, base_sha, head_sha) -> None:
+    comparison = build_behavior_comparison(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        claims=claims or [],
+        evidences=evidence or [],
+        repo=repo,
+        base_sha=base_sha,
+        head_sha=head_sha,
+    )
+    flows = render_behavior_flows_markdown(
+        build_behavior_flows(comparison, symbols=symbols or [], relationships=relationships or [])
+    )
+    if flows:
+        parts.append(flows)
+    block = render_behavior_comparison_markdown(comparison)
+    if block:
+        parts.append(block)
 
 
 def _append_behavioral_changes(parts: list[str], *, symbols, relationships, claims) -> None:

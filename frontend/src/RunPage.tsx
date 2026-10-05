@@ -1,7 +1,15 @@
 import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
-import type { ChangeFlowDiagram, Epistemic, FileChange, RunDetail } from "./types";
+import type {
+  BehaviorComparison,
+  BehaviorFlows,
+  BehaviorItem,
+  ChangeFlowDiagram,
+  Epistemic,
+  FileChange,
+  RunDetail,
+} from "./types";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -184,6 +192,8 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
+              <BehaviorFlowsSection flows={run.behavior_flows} />
+              <BehaviorComparisonSection comparison={run.behavior_comparison} />
               <BehavioralChangesSection rows={run.behavioral_changes ?? []} />
               <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
               <section className="narrative">
@@ -349,7 +359,15 @@ function useMermaidHost(chart: string, host: RefObject<HTMLDivElement | null>) {
   return error;
 }
 
-function MermaidDiagram({ chart }: { chart: string }) {
+function MermaidDiagram({
+  chart,
+  label = "Change diagram",
+  emptyText = "No changed symbols in the change graph.",
+}: {
+  chart: string;
+  label?: string;
+  emptyText?: string;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const modalHost = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(DIAGRAM_ZOOM_DEFAULT);
@@ -371,9 +389,9 @@ function MermaidDiagram({ chart }: { chart: string }) {
   const resetZoom = () => setZoom(DIAGRAM_ZOOM_DEFAULT);
 
   return (
-    <section className="diagram" aria-label="Change diagram">
+    <section className="diagram" aria-label={label}>
       {!chart ? (
-        <p>No changed symbols in the change graph.</p>
+        <p>{emptyText}</p>
       ) : error ? (
         <p className="error">{error}</p>
       ) : (
@@ -425,7 +443,7 @@ function MermaidDiagram({ chart }: { chart: string }) {
         </>
       )}
       {expanded && chart && !error ? (
-        <div className="diagram-overlay" role="dialog" aria-modal="true" aria-label="Change diagram enlarged">
+        <div className="diagram-overlay" role="dialog" aria-modal="true" aria-label={`${label} enlarged`}>
           <div className="diagram-modal">
             <div className="diagram-modal-head">
               <button type="button" className="diagram-control" onClick={() => setExpanded(false)}>
@@ -494,6 +512,130 @@ function LabeledExplainSection({ title, rows }: { title: string; rows: { label: 
         </div>
       ))}
     </section>
+  );
+}
+
+function BehaviorFlowsSection({ flows }: { flows?: BehaviorFlows }) {
+  if (!flows || (!flows.before && !flows.after)) return null;
+  return (
+    <section className="narrative behavior-flows">
+      <h3>Old flow vs New flow</h3>
+      {flows.legend ? <p className="kicker">{flows.legend}</p> : null}
+      <div className="flow-pair">
+        <div className="flow-side flow-before">
+          <h4>Old flow (base)</h4>
+          <MermaidDiagram chart={flows.before} label="Old flow diagram" emptyText="Nothing to draw for the base commit." />
+        </div>
+        <div className="flow-side flow-after">
+          <h4>New flow (head)</h4>
+          <MermaidDiagram chart={flows.after} label="New flow diagram" emptyText="The changed code is not present at the head commit." />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BehaviorComparisonSection({ comparison }: { comparison?: BehaviorComparison }) {
+  const items = comparison?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <section className="narrative behavior-comparison">
+      <h3>Old vs New Behavior</h3>
+      {comparison?.summary ? <p className="behavior-summary">{comparison.summary}</p> : null}
+      {items.map((item) => (
+        <BehaviorCard key={`${item.file}:${item.name}`} item={item} />
+      ))}
+    </section>
+  );
+}
+
+function BehaviorCard({ item }: { item: BehaviorItem }) {
+  const callers = item.reach.callers;
+  return (
+    <div className={item.removed ? "behavior-card removed" : "behavior-card"}>
+      <div className="behavior-card-head">
+        <code className="behavior-name">{item.display_name}</code>
+        {item.href ? (
+          <a href={item.href} target="_blank" rel="noreferrer" className="behavior-location">
+            {item.location}
+          </a>
+        ) : (
+          <span className="behavior-location">{item.location}</span>
+        )}
+        {item.exported ? <span className="badge">exported</span> : null}
+        {item.removed ? <span className="badge badge-removed">removed</span> : null}
+      </div>
+      <table className="behavior-table">
+        <thead>
+          <tr>
+            <th>Aspect</th>
+            <th>Before (base)</th>
+            <th>After (head)</th>
+            <th>What changes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {item.changes.map((change) => (
+            <tr key={change.claim_id}>
+              <td className="behavior-aspect">{change.label}</td>
+              <td className="behavior-before">
+                <CodeSide text={change.before} href={change.before_href} location={change.before_location} />
+              </td>
+              <td className="behavior-after">
+                <CodeSide text={change.after} href={change.after_href} location={change.after_location} />
+              </td>
+              <td>{change.summary}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {item.removed ? null : (
+        <div className="behavior-reach">
+          <span className="detail-label">Who now sees this</span>
+          {callers.length === 0 ? (
+            <span>No stored caller reaches it.</span>
+          ) : (
+            <ul>
+              {callers.map((caller) => (
+                <li key={`${caller.file}:${caller.name}:${caller.depth}`}>
+                  <code>{caller.name}</code>
+                  {caller.file ? <span className="kicker"> {caller.file}</span> : null}
+                  {caller.depth > 1 ? (
+                    <span className="kicker">
+                      {" "}
+                      via <code>{caller.via}</code>
+                    </span>
+                  ) : null}
+                  {caller.entry_point ? <span className="badge">entry point</span> : null}
+                  {caller.outside_diff ? <span className="badge badge-outside">outside diff</span> : null}
+                </li>
+              ))}
+              {item.reach.truncated ? <li className="kicker">More callers were not walked.</li> : null}
+            </ul>
+          )}
+          <span className="detail-label">Tests</span>
+          <span>{item.reach.tests.length ? item.reach.tests.join(", ") : "None reference it."}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CodeSide({ text, href, location }: { text: string | null; href: string | null; location: string | null }) {
+  if (text === null) return <span className="behavior-none">—</span>;
+  return (
+    <>
+      <code className="behavior-code">{text}</code>
+      {location ? (
+        href ? (
+          <a className="behavior-line" href={href} target="_blank" rel="noreferrer">
+            {location}
+          </a>
+        ) : (
+          <span className="behavior-line">{location}</span>
+        )
+      ) : null}
+    </>
   );
 }
 
