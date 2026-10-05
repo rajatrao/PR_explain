@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from app.analyzer.parse import is_dunder_name, is_package_marker, is_private_python_name, is_test_path
+from app.explanation.flow_review import build_flow_rows
 from app.explanation.explain_view import function_file_by_name, private_python_hidden_names, without_hidden_symbols
 
 _AREAS = ("API", "Database", "Auth", "Frontend", "Backend", "Tests", "Dependencies", "Configuration")
@@ -80,7 +81,12 @@ def build_details(
     built.extend(
         [
             {"title": "What changed", "rows": _changed_rows(symbols, claims, evidence_by_id, repo, sha)},
-            {"title": "Change flow", "rows": _flow_rows(sections or [], repo, sha)},
+            {
+                "title": "Change flow",
+                "rows": build_flow_rows(
+                    symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
+                ),
+            },
         ]
     )
     built.extend(
@@ -245,18 +251,53 @@ def _bullet_lines(rows: list) -> list[str]:
     return lines
 
 
+_VISIBLE_FLOWS = 3
+
+
 def _change_flow_markdown(section: dict) -> str:
-    """Nested bullets, one call per line, with a blank line under the heading."""
+    """One bullet per flow (entry → … → changed function) with its facts nested under it.
+
+    The first few flows are open; the rest fold into a collapsed block, never splitting a flow.
+    """
     lines = ["### Change flow", ""]
-    shown, hidden = _split_rows(section.get("rows") or [])
-    body = _change_flow_lines(shown)
-    if not body:
+    groups = _flow_groups(section.get("rows") or [])
+    if not groups:
         lines.append("- **Item** — none found")
         return "\n".join(lines)
-    lines.extend(body)
+    shown, hidden = groups[:_VISIBLE_FLOWS], groups[_VISIBLE_FLOWS:]
+    lines.extend(_flow_group_lines(shown))
     if hidden:
-        lines.extend(_collapsed_block(len(hidden), _change_flow_lines(hidden)))
+        lines.extend(_collapsed_block(len(hidden), _flow_group_lines(hidden)))
     return "\n".join(lines)
+
+
+def _flow_groups(rows: list) -> list[tuple[str, list]]:
+    groups: list[tuple[str, list]] = []
+    for row in rows:
+        label = row.get("label") or "Item"
+        if groups and groups[-1][0] == label:
+            groups[-1][1].append(row)
+        else:
+            groups.append((label, [row]))
+    return groups
+
+
+def _flow_group_lines(groups: list[tuple[str, list]]) -> list[str]:
+    lines: list[str] = []
+    for label, grouped in groups:
+        lines.append(f"- **{label}**")
+        for row in grouped:
+            lines.append(f"  - {_flow_value(row)}")
+    return lines
+
+
+def _flow_value(row: dict) -> str:
+    """Bold the fact name ("What changes", "Call at head", …) and link only the location."""
+    value = str(row.get("value") or "none found")
+    href = row.get("href")
+    name, sep, rest = value.partition(": ")
+    text = f"**{name}:** {rest}" if sep and len(name) <= 20 else value
+    return f"{text} ([code]({href}))" if href else text
 
 
 def _change_flow_lines(rows: list) -> list[str]:

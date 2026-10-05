@@ -675,6 +675,7 @@ function isDetailRow(row: DetailRow | null): row is DetailRow {
 
 function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: DetailRow[]; wrapFirst?: boolean }) {
   const visible = rows.filter(isDetailRow).filter((row) => !isOmittedEmptyRow(title, row));
+  if (title === "Change flow" && visible.length > 0) return <ChangeFlowGroup rows={visible} />;
   if (title === "Risk Areas" && visible.length === 0) return null;
   const folded = FOLD_SECTIONS.has(title);
   const shown = folded ? visible : visible.slice(0, DETAIL_ROW_LIMIT);
@@ -716,6 +717,65 @@ function DetailGroup({ title, rows, wrapFirst = false }: { title: string; rows: 
     <div className={className}>
       <h3>{title}</h3>
       {body}
+    </div>
+  );
+}
+
+const VISIBLE_FLOWS = 3;
+
+/** One card per flow (entry → … → changed function) with its facts listed under it. */
+function ChangeFlowGroup({ rows }: { rows: DetailRow[] }) {
+  const groups: { label: string; rows: DetailRow[] }[] = [];
+  for (const row of rows) {
+    const last = groups[groups.length - 1];
+    if (last && last.label === row.label) last.rows.push(row);
+    else groups.push({ label: row.label, rows: [row] });
+  }
+  const shown = groups.slice(0, VISIBLE_FLOWS);
+  const extra = groups.slice(VISIBLE_FLOWS);
+  return (
+    <div className="detail-group change-flow">
+      <h3>Change flow</h3>
+      {shown.map((group, index) => (
+        <FlowCard key={`${group.label}-${index}`} label={group.label} rows={group.rows} />
+      ))}
+      {extra.length > 0 ? (
+        <details className="detail-more">
+          <summary>Show {extra.length} more</summary>
+          {extra.map((group, index) => (
+            <FlowCard key={`${group.label}-more-${index}`} label={group.label} rows={group.rows} />
+          ))}
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function FlowCard({ label, rows }: { label: string; rows: DetailRow[] }) {
+  return (
+    <div className="flow-card">
+      <div className="flow-path">{label}</div>
+      <ul>
+        {rows.map((row, index) => {
+          const split = row.value.indexOf(": ");
+          const name = split > 0 && split <= 20 ? row.value.slice(0, split) : null;
+          const text = name ? row.value.slice(split + 2) : row.value;
+          return (
+            <li key={`${index}-${row.value}`}>
+              {name ? <strong>{name}: </strong> : null}
+              {text}
+              {row.href ? (
+                <>
+                  {" "}
+                  <a href={row.href} target="_blank" rel="noreferrer">
+                    code
+                  </a>
+                </>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
