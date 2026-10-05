@@ -5,7 +5,8 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
-from app.explanation.system_impact import build_system_impact_rows, render_system_impact_markdown
+from app.explanation.impact import build_impact_section, render_impact_markdown
+from app.explanation.impact_facts import build_impact_facts
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
@@ -68,8 +69,7 @@ def render_pull_request_comment(
     _append_behavioral_changes(
         parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
     )
-    _append_flow_diagrams(parts, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
-    _append_system_impact(parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_impact(parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
     if story:
         parts.append(story)
     parts.append(footer)
@@ -186,8 +186,9 @@ def render_combined_comment(
     _append_behavioral_changes(
         flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
     )
-    _append_flow_diagrams(flow_parts, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
-    _append_system_impact(flow_parts, symbols=symbols, relationships=relationships, claims=claims)
+    _append_impact(
+        flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
+    )
     if story:
         flow_parts.append(story)
     built = build_details(
@@ -201,7 +202,9 @@ def render_combined_comment(
         document_unknowns=document_unknowns,
         review_questions=review_questions,
     )
-    details_md = _markdown_for(built, _DETAILS_TITLES)
+    flow_blocks: list[str] = []
+    _append_flow_diagrams(flow_blocks, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
+    details_md = _before_key_changes(_markdown_for(built, _DETAILS_TITLES), "\n\n".join(flow_blocks))
     review_md = _markdown_for(built, _REVIEW_TITLES)
     changes = build_file_changes(evidence or [], claims or [], patches)
 
@@ -504,9 +507,35 @@ def _append_behavioral_changes(parts: list[str], *, document, symbols, relations
     parts.append(render_behavioral_changes_markdown(section))
 
 
-def _append_system_impact(parts: list[str], *, symbols, relationships, claims) -> None:
-    rows = build_system_impact_rows(symbols=symbols or [], relationships=relationships or [], claims=claims or [])
-    parts.append(render_system_impact_markdown(rows))
+def _append_impact(parts: list[str], *, document, symbols, relationships, claims, evidence) -> None:
+    behavior_facts = build_behavior_facts(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        claims=claims or [],
+        evidences=evidence or [],
+    )
+    impact_facts = build_impact_facts(claims=claims or [], evidences=evidence or [], behavior_facts=behavior_facts)
+    narrative = getattr(document, "impact", None) if document is not None else None
+    reasons = list(getattr(document, "impact_screening", None) or []) if document is not None else []
+    section = build_impact_section(
+        narrative=narrative,
+        behavior_facts=behavior_facts,
+        impact_facts=impact_facts,
+        prescreened=True,
+        reasons=reasons,
+    )
+    parts.append(render_impact_markdown(section))
+
+
+def _before_key_changes(details_md: str, block: str) -> str:
+    """Put the old and new flow diagrams at the top of Details, above Key Changes."""
+    if not block:
+        return details_md
+    marker = "### Key Changes"
+    if marker in details_md:
+        head, tail = details_md.split(marker, 1)
+        return f"{head}{block}\n\n{marker}{tail}"
+    return f"{block}\n\n{details_md}" if details_md else block
 
 
 def _flow_markdown(text: str) -> str:

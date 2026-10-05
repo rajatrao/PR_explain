@@ -25,7 +25,8 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
-from app.explanation.system_impact import build_system_impact_rows
+from app.explanation.impact import build_impact_section
+from app.explanation.impact_facts import build_impact_facts
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.select import build_packet
@@ -399,15 +400,24 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
         "behavioral_changes": build_behavioral_section(
-            narrative=_quick_narrative(explanations),
+            narrative=_quick_field(explanations, "behavioral_changes"),
             reasons=_quick_screening(explanations),
-            facts=build_behavior_facts(
-                symbols=run.symbols,
-                relationships=run.relationships_,
-                claims=run.claims,
-                evidences=run.evidences,
+            facts=(
+                behavior_facts := build_behavior_facts(
+                    symbols=run.symbols,
+                    relationships=run.relationships_,
+                    claims=run.claims,
+                    evidences=run.evidences,
+                )
             ),
             prescreened=True,
+        ),
+        "impact": build_impact_section(
+            narrative=_quick_field(explanations, "impact"),
+            behavior_facts=behavior_facts,
+            impact_facts=build_impact_facts(claims=run.claims, evidences=run.evidences, behavior_facts=behavior_facts),
+            prescreened=True,
+            reasons=_quick_impact_screening(explanations),
         ),
         "behavior_flows": build_behavior_flows(
             build_behavior_comparison(
@@ -418,11 +428,6 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             ),
             symbols=run.symbols,
             relationships=run.relationships_,
-        ),
-        "system_impact": build_system_impact_rows(
-            symbols=run.symbols,
-            relationships=run.relationships_,
-            claims=run.claims,
         ),
         "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
         "details": build_details(
@@ -453,14 +458,22 @@ def _patches_for_run(run: AnalysisRun) -> dict[str, str]:
     )
 
 
-def _quick_narrative(explanations: dict) -> dict | None:
-    """The screened behavioral narrative stored with the Quick explanation, when it succeeded."""
+def _quick_field(explanations: dict, field: str) -> dict | None:
+    """A screened narrative (behavioral_changes or impact) stored with a succeeded Quick explanation."""
     quick = explanations.get("quick") or {}
     document = quick.get("document") if quick.get("status") == "succeeded" else None
     if not isinstance(document, dict):
         return None
-    narrative = document.get("behavioral_changes")
-    return narrative if isinstance(narrative, dict) else None
+    value = document.get(field)
+    return value if isinstance(value, dict) else None
+
+
+def _quick_impact_screening(explanations: dict) -> list[str]:
+    quick = explanations.get("quick") or {}
+    document = quick.get("document") if isinstance(quick.get("document"), dict) else {}
+    if quick.get("status") != "succeeded":
+        return _quick_screening(explanations)
+    return [str(item) for item in document.get("impact_screening") or []]
 
 
 def _quick_screening(explanations: dict) -> list[str]:

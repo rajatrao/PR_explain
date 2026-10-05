@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 
 from app.analyzer.behavior import extract_behavior_deltas
+from app.analyzer.surface import find_surfaces
 from app.analyzer.diff import added_lines, overlaps
 from app.analyzer.parse import (
     CallSite,
@@ -387,6 +388,7 @@ def analyze(
             )
 
     _behavior_claims(snapshot, functions, add_claim, add_evidence)
+    _surface_claims(snapshot, add_claim, add_evidence)
 
     for path in sorted(change_lines):
         if path not in snapshot.files and not any(change.path == path for change in snapshot.changes):
@@ -967,3 +969,43 @@ def _behavior_claims(snapshot: Snapshot, functions: list[Symbol], add_claim, add
 def _behavior_description(category: str, guard: str | None) -> str:
     """Category, then the enclosing condition read from the same side of the diff when there is one."""
     return f"{category}\nwhen: {guard}" if guard else category
+
+
+_SURFACE_VERB = {"added": "added", "removed": "removed", "changed": "changed"}
+
+
+def _surface_claims(snapshot: Snapshot, add_claim, add_evidence) -> None:
+    """One FACT claim per visible surface (route, table, column, setting, package, UI file) the diff touches."""
+    for finding in find_surfaces(snapshot.changes, skip_path=lambda path: is_test_path(path) or _skipped(path)):
+        verb = _SURFACE_VERB.get(finding.kind, finding.kind)
+        if finding.level == "api":
+            text = f"HTTP route {finding.name} is {verb} in this pull request."
+        elif finding.level == "data":
+            text = f"Data {finding.name} ({finding.detail}) is {verb} in this pull request."
+        elif finding.level == "config":
+            text = f"Configuration {finding.name} ({finding.detail}) is {verb} in this pull request."
+        elif finding.level == "dependency":
+            text = f"Dependency {finding.name} ({finding.detail}) is {verb} in this pull request."
+        else:
+            text = f"Web interface file {finding.name} is {verb} in this pull request."
+        slug = f"{finding.level}_{_slug(finding.name)}_{_slug(finding.file_path)}"
+        evidence = add_evidence(
+            id=f"ev_surface_{slug}",
+            type="diff_hunk",
+            repo=snapshot.repository,
+            commit_sha=snapshot.base_sha if finding.kind == "removed" else snapshot.head_sha,
+            file=finding.file_path,
+            start_line=finding.line,
+            end_line=finding.line,
+            symbol=None,
+            description=f"{finding.level}|{finding.kind}|{finding.name}|{finding.detail}",
+            snippet=finding.snippet[:SNIPPET_CAP] or None,
+        )
+        add_claim(
+            id=f"cl_surface_{slug}",
+            epistemic="FACT",
+            kind="surface_changed",
+            text=text,
+            subject=f"{finding.level}:{finding.name}",
+            evidence_ids=[evidence.id],
+        )

@@ -439,3 +439,11 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 @media (max-width: 800px) {
   .behavior-compare { grid-template-columns: 1fr; }
 }
+.impact-level { display: grid; grid-template-columns: 190px 1fr; gap: 6px 14px; padding: 10px 0; border-top: 1px solid #ebe4d8; }
+.impact-level:first-of-type { border-top: 0; }
+.impact-label { font-weight: 600; }
+.impact-summary { margin: 0; }
+.impact-level ul { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+@media (max-width: 800px) {
+  .impact-level { grid-template-columns: 1fr; }
+}
