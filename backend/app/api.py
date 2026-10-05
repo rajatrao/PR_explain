@@ -23,7 +23,7 @@ from app.explanation.changes import build_file_changes
 from app.github.patches import fetch_compare_patches
 from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
-from app.explanation.system_behavior import build_system_behavior
+from app.explanation.system_flow import build_system_flow
 from app.explanation.behavioral_changes import build_behavioral_changes
 from app.explanation.system_impact import build_system_impact_rows
 from app.explanation.details import build_details
@@ -398,7 +398,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             )
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
-        "system_behavior": build_system_behavior(
+        "system_flow": build_system_flow(
             behavior := build_behavior_comparison(
                 symbols=run.symbols,
                 relationships=run.relationships_,

@@ -7,8 +7,8 @@ import type {
   Epistemic,
   FileChange,
   RunDetail,
-  SystemBehavior,
-  SystemBehaviorChange,
+  SystemFlow,
+  SystemFlowFamily,
 } from "./types";
 
 mermaid.initialize({
@@ -192,7 +192,7 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
-              <SystemBehaviorSection summary={run.system_behavior} />
+              <SystemFlowSection summary={run.system_flow} />
               <BehaviorFlowsSection flows={run.behavior_flows} />
               <BehavioralChangesSection rows={run.behavioral_changes ?? []} />
               <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
@@ -535,88 +535,93 @@ function BehaviorFlowsSection({ flows }: { flows?: BehaviorFlows }) {
   );
 }
 
-function SystemBehaviorSection({ summary }: { summary?: SystemBehavior }) {
-  const changes = summary?.changes ?? [];
-  if (changes.length === 0) return null;
-  const notes = [summary?.unaffected, summary?.not_summarized ? `${summary.not_summarized} other statement change${summary.not_summarized === 1 ? " is" : "s are"} in the diff but not summarized here.` : ""]
-    .filter(Boolean)
-    .join(" ");
+function SystemFlowSection({ summary }: { summary?: SystemFlow }) {
+  const flows = summary?.flows ?? [];
+  if (flows.length === 0) return null;
+  const radius = [summary?.blast_radius, summary?.unaffected, summary?.partial].filter(Boolean).join(" ");
+  const skipped = summary?.not_summarized ?? 0;
   return (
-    <section className="narrative system-behavior">
-      <h3>System Behavior Change</h3>
-      {summary?.headline ? <p className="behavior-summary">{summary.headline}</p> : null}
-      {changes.map((change) => (
-        <SystemBehaviorCard key={`${change.file}:${change.subject}`} change={change} />
+    <section className="narrative system-flow">
+      <h3>System Flow Change</h3>
+      {summary?.headline ? (
+        <p className="behavior-summary">
+          <InlineCode text={summary.headline} />
+        </p>
+      ) : null}
+      {flows.map((flow) => (
+        <SystemFlowCard key={flow.title} flow={flow} />
       ))}
-      {notes ? <p className="kicker">{notes}</p> : null}
+      {radius ? (
+        <div className="behavior-reach">
+          <span className="detail-label">Blast radius</span>
+          <span>{radius}</span>
+        </div>
+      ) : null}
+      {summary?.focus?.length ? (
+        <div className="flow-focus">
+          <h4>Review focus</h4>
+          <ul>
+            {summary.focus.map((line) => (
+              <li key={line}>
+                <InlineCode text={line} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {skipped ? (
+        <p className="kicker">
+          {skipped} other statement change{skipped === 1 ? " is" : "s are"} in the diff but not summarized here.
+        </p>
+      ) : null}
     </section>
   );
 }
 
-function SystemBehaviorCard({ change }: { change: SystemBehaviorChange }) {
-  const reached = change.entry_points.length ? change.entry_points : change.reached_through;
+function SystemFlowCard({ flow }: { flow: SystemFlowFamily }) {
   return (
-    <div className={change.removed ? "behavior-card removed" : "behavior-card"}>
+    <div className={flow.removed_only ? "behavior-card removed" : "behavior-card"}>
       <div className="behavior-card-head">
-        <code className="behavior-name">{change.subject}</code>
-        <span className="behavior-location">{change.file}</span>
-        {change.exported ? <span className="badge">exported</span> : null}
-        {change.removed ? <span className="badge badge-removed">removed</span> : null}
+        <span className="behavior-name">
+          <InlineCode text={flow.title} />
+        </span>
       </div>
+      {flow.paths.length ? (
+        <ul className="flow-paths">
+          {flow.paths.map((path) => (
+            <li key={path}>
+              <InlineCode text={path} />
+            </li>
+          ))}
+          {flow.more_paths ? <li className="kicker">… and {flow.more_paths} more</li> : null}
+        </ul>
+      ) : null}
       <table className="behavior-table">
         <thead>
           <tr>
+            <th className="behavior-aspect">What</th>
             <th>Before this PR</th>
             <th>After this PR</th>
           </tr>
         </thead>
         <tbody>
-          {change.rows.map((row, index) => (
-            <tr key={`${index}-${row.now}`}>
+          {flow.effects.map((effect, index) => (
+            <tr key={`${index}-${effect.after}`}>
+              <td className="behavior-aspect">{effect.label}</td>
               <td className="behavior-before">
-                <InlineCode text={row.before} />
+                <InlineCode text={effect.before} />
               </td>
               <td className="behavior-after">
-                <InlineCode text={row.now} />
+                <InlineCode text={effect.after} />
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {change.removed ? null : (
-        <div className="behavior-reach">
-          <span className="detail-label">Reached from</span>
-          <span>
-            {reached.length ? (
-              <>
-                {reached.map((name, index) => (
-                  <Fragment key={name}>
-                    {index ? ", " : ""}
-                    <code>{name}</code>
-                  </Fragment>
-                ))}
-                {change.entry_points.length ? <span className="kicker"> (entry points)</span> : null}
-              </>
-            ) : (
-              "No stored caller."
-            )}
-          </span>
-          {change.call_sites.length ? (
-            <>
-              <span className="detail-label">Callers at head</span>
-              <ul>
-                {change.call_sites.map((site) => (
-                  <li key={`${site.file}:${site.line}:${site.call}`}>
-                    <code>{site.caller}</code> → <code>{site.call}</code>
-                    {site.file ? <span className="kicker"> {site.file}{site.line ? `:${site.line}` : ""}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-          <span className="detail-label">Tests</span>
-          <span>{change.tests.length ? change.tests.join(", ") : "None reference it."}</span>
-        </div>
+      {flow.removed_only ? null : (
+        <p className="kicker flow-tests">
+          Tests on this flow: {flow.tests.length ? flow.tests.join(", ") : "no stored test references the changed code"}.
+        </p>
       )}
     </div>
   );
