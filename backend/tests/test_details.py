@@ -23,8 +23,6 @@ _TITLES = [
 _COMMENT_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
-    "### Risk Areas",
-    "### What changed",
     "### Change flow",
     "### Shared code",
     "### Why a file outside the diff matters",
@@ -157,7 +155,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "impact summary is not available" in impact_md
     assert explain.index("### Behavioral Changes") < explain.index("### Impact")
     assert "- createSession changed." not in explain  # Explain has no summary section
-    assert "### What changed" in details
+    assert "### What changed" not in details
     assert "createSession" in body
     detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]
     places = [details.index(title) for title in detail_titles]
