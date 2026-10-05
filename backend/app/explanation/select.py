@@ -4,7 +4,6 @@ from collections import defaultdict
 
 from app.analyzer.types import AnalysisResult, Snapshot
 from app.explanation.behavior_facts import build_behavior_facts
-from app.explanation.impact_facts import build_impact_facts
 from app.explanation.schema import (
     ClaimRef,
     ContextNote,
@@ -101,9 +100,6 @@ def build_packet(
             relationships=result.relationships,
             claims=result.claims,
             evidences=result.evidences,
-        )
-        packet.impact_facts = build_impact_facts(
-            claims=result.claims, evidences=result.evidences, behavior_facts=packet.behavior_facts
         )
     return packet
 

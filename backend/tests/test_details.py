@@ -154,7 +154,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Impact" in explain
     assert "| Area | Reason | Evidence file |" not in details
     impact_md = explain.split("### Impact", 1)[1].split("## ", 1)[0]
-    assert "**Affected flows**" in impact_md
+    assert "**Scope:**" in impact_md
     assert explain.index("### Behavioral Changes") < explain.index("### Impact")
     assert explain.index("### Impact") < explain.rindex("- createSession changed.")
     assert "### What changed" in details
