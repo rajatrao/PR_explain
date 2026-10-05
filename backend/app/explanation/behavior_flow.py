@@ -3,7 +3,7 @@
 Both diagrams are drawn from stored facts only:
 
 * the changed functions that have ``behavior_changed`` claims,
-* their direct callers (stored CALLS edges at the head commit),
+* their callers up to the entry points (stored CALLS edges at the head commit),
 * their callees: head CALLS edges, adjusted per side with the calls that the
   base and head statements of the diff name (a call only on ``-`` lines is an
   old-only edge, a call only on ``+`` lines is a new-only edge),
@@ -89,12 +89,20 @@ def _draw_item(index: int, item: dict, symbol, callees_of, before: "_Diagram", a
     before.node(focus, before_label, "focus")
     after.node(focus, after_label, "focus")
 
-    for caller in [c for c in item["reach"]["callers"] if c["depth"] == 1][:CALLER_CAP]:
-        caller_id = "c_" + _slug(f"{caller['file']}_{caller['name']}")
-        label = caller["name"]
+    # Upstream chain: every stored caller up to the entry points, each edge pointing at what it calls.
+    callers = item["reach"]["callers"][:CALLER_CAP * 2]
+    node_of: dict[tuple[int, str], str] = {}
+    for caller in callers:
+        node_of[(caller["depth"], caller["name"])] = "c_" + _slug(f"{caller['file']}_{caller['name']}")
+    for caller in callers:
+        caller_id = node_of[(caller["depth"], caller["name"])]
+        target = focus if caller["depth"] == 1 else node_of.get((caller["depth"] - 1, caller["via"]))
+        if target is None:
+            continue
+        css = "entry" if caller.get("entry_point") else "caller"
         for diagram in (before, after):
-            diagram.node(caller_id, label, "caller")
-            diagram.edge(caller_id, focus, "-->", None)
+            diagram.node(caller_id, caller["name"], css)
+            diagram.edge(caller_id, target, "-->", None)
 
     old_calls: list[str] = []
     new_calls: list[str] = []
@@ -147,7 +155,7 @@ class _Diagram:
 
     def node(self, node_id: str, label: str, css: str, *, shape: str = "box") -> None:
         current = self.nodes.get(node_id)
-        if current and current[1] in {"focus", "gone", "new"} and css in {"caller", "callee"}:
+        if current and current[1] in {"focus", "gone", "new"} and css in {"caller", "callee", "entry"}:
             return
         self.nodes[node_id] = (label, css, shape)
 
@@ -178,6 +186,7 @@ class _Diagram:
             lines.append(f"  linkStyle {','.join(str(i) for i in styled)} stroke:{colour},stroke-width:2px")
         lines.append("  classDef focus fill:#1e1a16,stroke:#1e1a16,color:#f3efe6")
         lines.append("  classDef caller fill:#f3efe6,stroke:#8a8172,color:#1e1a16")
+        lines.append("  classDef entry fill:#f3efe6,stroke:#1e1a16,stroke-width:2px,color:#1e1a16")
         lines.append("  classDef callee fill:#ffffff,stroke:#8a8172,color:#1e1a16")
         lines.append("  classDef gone fill:#fdecea,stroke:#c0392b,color:#7b241c,stroke-dasharray:4 3")
         lines.append("  classDef new fill:#e9f7ef,stroke:#1e8449,color:#145a32")

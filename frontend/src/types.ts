@@ -139,7 +139,7 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
-  system_behavior?: SystemBehavior;
+  system_flow?: SystemFlow;
   behavior_flows?: BehaviorFlows;
   behavioral_changes?: {
     label: string;
@@ -169,22 +169,32 @@ export type RunDetail = {
   };
 };
 
-export type SystemBehaviorChange = {
-  subject: string;
-  file: string;
-  exported: boolean;
-  removed: boolean;
-  rows: { before: string; now: string }[];
-  entry_points: string[];
-  reached_through: string[];
-  call_sites: { caller: string; file: string; line: number | null; call: string }[];
-  tests: string[];
+export type SystemFlowEffect = {
+  kind: string;
+  label: string;
+  before: string;
+  after: string;
 };
 
-export type SystemBehavior = {
+export type SystemFlowFamily = {
+  title: string;
+  entries: string[];
+  paths: string[];
+  more_paths: number;
+  changed: string[];
+  effects: SystemFlowEffect[];
+  tests: string[];
+  untested: string[];
+  removed_only: boolean;
+};
+
+export type SystemFlow = {
   headline: string;
-  changes: SystemBehaviorChange[];
+  flows: SystemFlowFamily[];
+  blast_radius: string;
   unaffected: string;
+  partial: string;
+  focus: string[];
   not_summarized: number;
 };
 
