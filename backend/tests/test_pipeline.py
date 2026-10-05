@@ -556,17 +556,6 @@ class _NarratingProvider:
             ],
             "watch": [],
         }
-        flow_ids = [fact.id for fact in request.packet.impact_facts if fact.area == "Affected flows" and fact.kind == "area"]
-        risk_ids = [fact.id for fact in request.packet.impact_facts if fact.kind == "risk"]
-        document["impact"] = {
-            "areas": [
-                {"area": "Sign-in", "summary": "Every sign-in path now creates sessions with an explicit TTL.", "fact_ids": flow_ids},
-                {"area": "Storage", "summary": "Sessions move to the `sessions_v2` table.", "fact_ids": flow_ids},
-            ],
-            "risks": [
-                {"severity": "high", "risk": "Any caller that does not pass a TTL stops working.", "fact_ids": risk_ids[:1]},
-            ],
-        }
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 
 
@@ -591,12 +580,10 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     assert "**Session token format**" in posted
     assert "redisClient" not in posted
     impact = body["impact"]
-    assert impact["source"] == "model"
-    assert [area["area"] for area in impact["areas"]] == ["Sign-in"]
-    # The cited risk fact is medium (a contract change), so a "high" from the model is capped.
-    assert impact["risks"] == [{"severity": "medium", "risk": "Any caller that does not pass a TTL stops working."}]
-    assert "- **Sign-in** — Every sign-in path now creates sessions with an explicit TTL." in posted
-    assert "sessions_v2" not in posted
+    assert impact["scope"].startswith("Several workflows.")
+    assert [item["title"] for item in impact["attention"]] == ["Shared function createSession changes its contract"]
+    assert [item["entry"] for item in impact["dependents"]] == ["googleCallback", "login", "refreshToken"]
+    assert "**Needs attention**" in posted and "**Who depends on this**" in posted
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
     assert "### Old flow vs New flow" in details
     assert "### Old flow vs New flow" not in posted.split("## Details for", 1)[0]

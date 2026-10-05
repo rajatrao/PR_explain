@@ -13,8 +13,6 @@ from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import screen_narrative
-from app.explanation.impact import screen_impact
-from app.explanation.impact_facts import build_impact_facts
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
 from app.explanation.select import build_packet
@@ -161,12 +159,6 @@ def execute_explain(
         document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts, screening)
         document.behavior_screening = [] if document.behavioral_changes else screening[:8]
         kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
-        impact_screening: list[str] = []
-        document.impact = screen_impact(
-            _raw_field(result.content, "impact"), packet.behavior_facts, packet.impact_facts, impact_screening
-        )
-        document.impact_screening = impact_screening[:8]
-        impact_kept = len(document.impact.areas) + len(document.impact.risks) if document.impact else 0
     _store_explanation(
         session,
         run,
@@ -194,8 +186,6 @@ def execute_explain(
                 "depth": depth,
                 "behavior_changes_kept": kept,
                 "behavior_screening": screening[:8],
-                "impact_items_kept": impact_kept,
-                "impact_screening": impact_screening[:8],
             }
             if depth == "quick"
             else {"depth": depth}
@@ -291,11 +281,6 @@ def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: 
                 relationships=stored.relationships,
                 claims=stored.claims,
                 evidences=stored.evidences,
-            )
-        if depth == "quick" and not packet.impact_facts:
-            stored = load_result(session, run)
-            packet.impact_facts = build_impact_facts(
-                claims=stored.claims, evidences=stored.evidences, behavior_facts=packet.behavior_facts
             )
         return packet
     result = load_result(session, run)

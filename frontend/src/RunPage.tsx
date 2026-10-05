@@ -500,49 +500,73 @@ const WRAP_FIRST_COLUMN = new Set([
 
 function ImpactSection({ section }: { section?: ImpactSummary }) {
   if (!section) return null;
-  const areas = section.areas ?? [];
-  const risks = section.risks ?? [];
+  const attention = section.attention ?? [];
+  const dependents = section.dependents ?? [];
+  const verify = section.verify ?? [];
+  const note = section.not_affected || section.partial;
   return (
     <section className="narrative impact-section">
       <h3>Impact</h3>
-      {areas.length === 0 && risks.length === 0 ? (
-        <p>No impact on routes, data, configuration, dependencies, the web interface, or public entry points was found.</p>
-      ) : null}
-      {areas.length ? (
-        <div className="impact-areas">
-          <h4>Impact areas</h4>
-          {areas.map((item) => (
-            <div className="impact-level" key={item.area}>
-              <span className="impact-label">
-                <InlineCode text={item.area} />
-              </span>
-              <p className="impact-summary">
-                <InlineCode text={item.summary} />
-              </p>
-            </div>
-          ))}
+      <p className="impact-scope">
+        <span className="detail-label">Scope</span> <InlineCode text={section.scope || "No behavior change was found."} />
+      </p>
+      {attention.length ? (
+        <div className="impact-risks">
+          <h4>Needs attention</h4>
+          <ol>
+            {attention.map((item) => (
+              <li key={item.title}>
+                <span className={`severity severity-${item.severity}`}>{item.severity}</span>
+                <div>
+                  <strong>
+                    <InlineCode text={item.title} />
+                  </strong>
+                  <p className="impact-why">
+                    <InlineCode text={item.why} />
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
         </div>
       ) : null}
-      {risks.length ? (
-        <div className="impact-risks">
-          <h4>Risks</h4>
+      {dependents.length ? (
+        <div className="impact-dependents">
+          <h4>Who depends on this</h4>
           <ul>
-            {risks.map((item) => (
-              <li key={item.risk}>
-                <span className={`severity severity-${item.severity}`}>{item.severity}</span>
-                <InlineCode text={item.risk} />
+            {dependents.map((item) => (
+              <li key={item.entry}>
+                <code>{item.entry}</code> reaches {item.reaches.join(", ")}
+                {item.calls.length ? (
+                  <span className="kicker">
+                    {" "}
+                    via{" "}
+                    {item.calls.map((call, index) => (
+                      <Fragment key={call}>
+                        {index ? "; " : ""}
+                        <code>{call}</code>
+                      </Fragment>
+                    ))}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      {areas.length || risks.length ? (
-        <p className="kicker">
-          {section.source === "model"
-            ? "Written by the configured model from the impact and behavior facts; each item was checked against the facts it cites."
-            : section.note}
-        </p>
+      {verify.length ? (
+        <div className="impact-verify">
+          <h4>Verify</h4>
+          <ul>
+            {verify.map((item) => (
+              <li key={item}>
+                <InlineCode text={item} />
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
+      {note ? <p className="kicker">{note}</p> : null}
     </section>
   );
 }

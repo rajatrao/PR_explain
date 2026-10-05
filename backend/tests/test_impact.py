@@ -1,8 +1,8 @@
 from app.analyzer.surface import find_surfaces
 from app.analyzer.types import Claim, Evidence, FileChange
-from app.explanation.impact import build_impact_section, render_impact_markdown, screen_impact
-from app.explanation.impact_facts import build_impact_facts
-from app.explanation.schema import BehaviorChangeFact, BehaviorFunctionFact, ImpactNarrative
+from app.analyzer.review_signals import _checks_result, _inside_try
+from app.explanation.impact import build_impact, render_impact_markdown
+from app.explanation.schema import BehaviorChangeFact, BehaviorFunctionFact
 
 
 def _surface_patch():
@@ -60,86 +60,127 @@ def _claims_and_evidence():
     return claims, evidences
 
 
-def _behavior():
-    return [
-        BehaviorFunctionFact(
-            function="createSession",
-            file="src/session.ts",
-            public=True,
-            reached_from=["login", "googleCallback"],
-            notes=["createSession now declares 2 required parameters; login passes 1 argument."],
-            changes=[
-                BehaviorChangeFact(
-                    id="b1",
-                    claim_id="x",
-                    kind="signature",
-                    before="export function createSession(userId: string): string {",
-                    after="export function createSession(userId: string, ttlMs: number): string {",
-                )
-            ],
-        )
-    ]
-
-
-def test_impact_facts_are_areas_and_risks_without_analysis_bookkeeping():
-    claims, evidences = _claims_and_evidence()
-    claims.append(Claim(id="r1", epistemic="FACT", kind="reaches_changed", text="x reaches y", subject="src/a.ts"))
-    claims.append(Claim(id="u1", epistemic="INFERENCE", kind="behavior_unchanged", text="unchanged", subject="src/b.ts"))
-    claims.append(Claim(id="t1", epistemic="UNKNOWN", kind="fanout_truncated", text="12 further callers omitted.", subject="f"))
-    claims.append(Claim(id="m1", epistemic="UNKNOWN", kind="missing_test", text="No test references f.", subject="f"))
-    facts = build_impact_facts(claims=claims, evidences=evidences, behavior_facts=_behavior())
-    areas = {(f.area, f.text) for f in facts if f.kind == "area"}
-    risks = {(f.severity, f.text) for f in facts if f.kind == "risk"}
-    assert ("Affected flows", "Changed behavior is reachable from public entry points login, googleCallback.") in areas
-    assert ("Public API", "Route POST /api/runs/{id}/retry is added.") in areas
-    assert ("Data", "The table behavior_facts is dropped.") not in areas
-    assert ("high", "A migration drops the column runs.old; data stored in it is lost when the migration runs.") in risks
-    assert ("high", "A caller may break: createSession now declares 2 required parameters; login passes 1 argument.") in risks
-    assert ("medium", "Callers of createSession must now pass ttlMs.") in risks
-    assert ("medium", "Package mermaid crosses a major version (^10.0.0 to ^11.0.0).") in risks
-    assert ("medium", "New setting API_KEY: every environment must provide it or rely on a default.") in risks
-    blob = " ".join(f.text for f in facts)
-    for noise in ("production file", "call sites were", "truncated", "test", "Testing", ".py", ".ts"):
-        assert noise not in blob, noise
-
-    section = build_impact_section(narrative=None, behavior_facts=_behavior(), impact_facts=facts)
-    assert section["source"] == "facts"
-    assert [risk["severity"] for risk in section["risks"]][:2] == ["high", "high"]
-    markdown = render_impact_markdown(section)
-    assert "**Impact areas**" in markdown and "**Risks**" in markdown
-    assert "- **High** — A migration drops the column runs.old" in markdown
-
-
-def test_model_impact_is_screened_and_severity_is_capped_by_the_facts():
-    claims, evidences = _claims_and_evidence()
-    facts = build_impact_facts(claims=claims, evidences=evidences, behavior_facts=_behavior())
-    fid = {f.text: f.id for f in facts}
-    api_area = fid["Route POST /api/runs/{id}/retry is added."]
-    major = fid["Package mermaid crosses a major version (^10.0.0 to ^11.0.0)."]
-    drop = fid["A migration drops the column runs.old; data stored in it is lost when the migration runs."]
-    narrative = ImpactNarrative.model_validate(
-        {
-            "areas": [
-                {"area": "Run retries", "summary": "Clients can retry a failed run through `POST /api/runs/{id}/retry`.", "fact_ids": [api_area]},
-                {"area": "Sessions", "summary": "Sessions now go through `createSession()`.", "fact_ids": [api_area]},
-                {"area": "Caching", "summary": "Results are cached in `REDIS_URL`.", "fact_ids": [api_area]},
-            ],
-            "risks": [
-                {"severity": "high", "risk": "The diagram renderer moves to a new major version and may render differently.", "fact_ids": [major]},
-                {"severity": "medium", "risk": "Existing values in runs.old are lost on upgrade.", "fact_ids": [drop]},
-                {"severity": "high", "risk": "The new route has no auth.", "fact_ids": [api_area]},
-            ],
-        }
+def _context(claims, evidences, caller, callee, handled, checks=""):
+    eid = f"ctx-{caller}"
+    evidences.append(
+        Evidence(id=eid, type="source_span", repo="r", commit_sha="b", file="x", start_line=1, end_line=1, symbol=callee,
+                 description=f"context|{caller}|{callee}|{'handled' if handled else 'unhandled'}|{checks}")
     )
-    reasons: list[str] = []
-    kept = screen_impact(narrative, _behavior(), facts, reasons)
-    assert [area.area for area in kept.areas] == ["Run retries"]
-    # Severity cannot exceed the cited risk fact (medium); a lower severity is kept as written.
-    assert [(risk.severity, risk.risk[:24]) for risk in kept.risks] == [
-        ("medium", "The diagram renderer mov"),
-        ("medium", "Existing values in runs."),
+    claims.append(Claim(id=f"cl-{eid}", epistemic="FACT", kind="call_context", text="", subject=callee, evidence_ids=[eid]))
+
+
+def _charge():
+    return BehaviorFunctionFact(
+        function="charge",
+        file="app/billing.py",
+        public=True,
+        reached_from=["post_checkout"],
+        callers_at_head=["checkout → charge(cart.order)"],
+        changes=[
+            BehaviorChangeFact(id="b1", claim_id="x", kind="error", before='raise ValueError("empty")', after='raise InvalidOrder("negative")', before_when="total <= 0", after_when="total < 0"),
+            BehaviorChangeFact(id="b2", claim_id="y", kind="return", after="return None", after_when="total == 0"),
+        ],
+    )
+
+
+def _session():
+    return BehaviorFunctionFact(
+        function="createSession",
+        file="src/session.ts",
+        public=True,
+        reached_from=["login", "googleCallback", "refreshToken"],
+        callers_at_head=["login → createSession(userId, 3600)", "googleCallback → createSession(userId, 3600)", "refreshToken → createSession(userId, 7200)"],
+        notes=["All 3 head call sites of createSession pass a matching number of arguments."],
+        changes=[
+            BehaviorChangeFact(
+                id="b3",
+                claim_id="z",
+                kind="signature",
+                before="export function createSession(userId: string): string {",
+                after="export function createSession(userId: string, ttlMs: number): string {",
+            )
+        ],
+    )
+
+
+def test_impact_ranks_findings_by_rule_and_lists_dependents():
+    claims, evidences = _claims_and_evidence()
+    _context(claims, evidences, "checkout", "charge", handled=False, checks="if receipt is None")
+    claims.append(Claim(id="s1", epistemic="FACT", kind="stale_test", text="tests/test_cart.py exercises charge, which changed, and the test is not changed in this pull request.", subject="charge"))
+    claims.append(Claim(id="k1", epistemic="FACT", kind="config_undocumented", text="", subject="API_KEY"))
+    claims.append(Claim(id="v1", epistemic="FACT", kind="resolution_coverage", text="", subject="coverage:12/20"))
+    claims.append(Claim(id="f1", epistemic="FACT", kind="file_changed", text="", subject="app/billing.py"))
+    section = build_impact(claims=claims, evidences=evidences, behavior_facts=[_charge(), _session()])
+
+    titles = [(item["severity"], item["title"]) for item in section["attention"]]
+    assert titles == [
+        ("high", "A migration drops the column runs.old"),
+        ("high", "New failure can reach post_checkout"),
+        ("medium", "Shared function createSession changes its contract"),
     ]
-    assert any("cites no risk fact" in reason for reason in reasons)
-    section = build_impact_section(narrative=kept, behavior_facts=_behavior(), impact_facts=facts, prescreened=True)
-    assert section["source"] == "model"
-    assert "Written by the configured model" in render_impact_markdown(section)
+    failure = section["attention"][1]["why"]
+    assert failure == (
+        "charge now fails with InvalidOrder when `total < 0` (it used to fail with ValueError). "
+        "No caller wraps the call in a try block: checkout."
+    )
+    assert section["attention"][2]["why"].startswith("Callers must now pass `ttlMs`. Called from login, googleCallback, refreshToken.")
+
+    assert [d["entry"] for d in section["dependents"]][:2] == ["googleCallback", "login"]
+    login = next(d for d in section["dependents"] if d["entry"] == "login")
+    assert login == {"entry": "login", "reaches": ["createSession"], "calls": ["createSession(userId, 3600)"]}
+
+    assert section["verify"][0].startswith("`tests/test_cart.py` exercises charge but was not updated")
+    assert "Set `API_KEY` in every environment before deploying." in section["verify"]
+    assert section["not_affected"] == ""
+    assert section["partial"] == "8 of 20 calls in the changed files could not be resolved to one function, so other consumers may exist."
+    assert section["scope"].startswith("Several workflows. 1 production file changed; the changed behavior is reached from 4 entry points")
+
+    markdown = render_impact_markdown(section)
+    assert markdown.startswith("### Impact\n\n**Scope:** Several workflows.")
+    assert "1. **High: A migration drops the column runs.old.** Data stored in it is lost when the migration runs." in markdown
+    assert "- login — reaches createSession via `createSession(userId, 3600)`" in markdown
+    assert "- [ ] Set `API_KEY` in every environment before deploying." in markdown
+    for noise in ("production files have no", "truncated", "test count"):
+        assert noise not in markdown
+
+
+def test_handled_failure_is_medium_and_complete_coverage_says_not_affected():
+    claims, evidences = [], []
+    _context(claims, evidences, "checkout", "charge", handled=True)
+    claims.append(Claim(id="v1", epistemic="FACT", kind="resolution_coverage", text="", subject="coverage:19/20"))
+    section = build_impact(claims=claims, evidences=evidences, behavior_facts=[_charge()])
+    failure = next(item for item in section["attention"] if item["title"].startswith("New failure"))
+    assert failure["severity"] == "medium"
+    assert failure["why"].endswith("Handled by checkout.")
+    early = next(item for item in section["attention"] if item["title"].startswith("Callers of charge"))
+    assert early["title"] == "Callers of charge can now receive `None`"
+    assert section["not_affected"].startswith("Every call in the changed files resolved")
+    assert section["partial"] == ""
+
+
+def test_try_and_result_checks_are_read_from_caller_lines():
+    py = [
+        "def checkout(cart):",
+        "    try:",
+        "        receipt = charge(cart.order)",
+        "        if receipt is None:",
+        "            return 'free'",
+        "    except InvalidOrder:",
+        "        return 'rejected'",
+        "    other = charge(cart.extra)",
+    ]
+    assert _inside_try(py, 3, 1, "app/cart.py") is True
+    assert _inside_try(py, 8, 1, "app/cart.py") is False
+    assert _checks_result(py, 3) == "if receipt is None"
+    ts = [
+        "export function login(userId: string) {",
+        "  try {",
+        "    const s = createSession(userId, 3600);",
+        "    if (!s) { return null; }",
+        "  } catch (e) { return null; }",
+        "  return createSession(userId, 1);",
+        "}",
+    ]
+    assert _inside_try(ts, 3, 1, "src/login.ts") is True
+    assert _inside_try(ts, 6, 1, "src/login.ts") is False
+    assert _checks_result(ts, 3) == "if (!s"

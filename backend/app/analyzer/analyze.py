@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 
 from app.analyzer.behavior import extract_behavior_deltas
+from app.analyzer.review_signals import review_signals
 from app.analyzer.surface import find_surfaces
 from app.analyzer.diff import added_lines, overlaps
 from app.analyzer.parse import (
@@ -188,9 +189,12 @@ def analyze(
         )
 
     resolved_calls: list[tuple[CallSite, Symbol, Symbol | None]] = []
+    unresolved_sites: list[CallSite] = []
     for site in calls:
         if site.member:
             candidates = by_name.get(site.callee, [])
+            if candidates:
+                unresolved_sites.append(site)
             if len(candidates) == 1:
                 add_claim(
                     id=f"cl_ambiguous_{_slug(site.file_path)}_{_slug(site.callee)}_{site.line}",
@@ -208,6 +212,7 @@ def analyze(
         if len(candidates) == 0:
             continue
         if len(candidates) > 1:
+            unresolved_sites.append(site)
             evidence = add_evidence(
                 id=f"ev_ambiguous_{_slug(site.file_path)}_{_slug(site.callee)}_{site.line}",
                 type="source_span",
@@ -621,6 +626,19 @@ def analyze(
         "succeeded",
         "Traced impact beyond the diff",
         {"impact_count": impact_count},
+    )
+
+    review_signals(
+        snapshot,
+        functions=functions,
+        resolved_calls=resolved_calls,
+        unresolved_sites=unresolved_sites,
+        relationships=relationships,
+        changed_ids=changed_id_set,
+        change_lines=change_lines,
+        add_claim=add_claim,
+        add_evidence=add_evidence,
+        slug=_slug,
     )
 
     return AnalysisResult(

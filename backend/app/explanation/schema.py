@@ -135,24 +135,6 @@ class BehaviorFunctionFact(BaseModel):
     changes: list[BehaviorChangeFact] = Field(default_factory=list)
 
 
-class ImpactFact(BaseModel):
-    """One grounded impact fact.
-
-    kind "area": an impact area the pull request touches (public API, data, configuration,
-    dependencies, web interface, affected flows). kind "risk": a reviewer risk with a severity
-    derived from the fact itself (for example a dropped column or a removed route is high).
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    id: str
-    kind: str
-    area: str
-    text: str
-    severity: str | None = None
-    behavior_ids: list[str] = Field(default_factory=list)
-
-
 class ExplanationPacket(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -167,7 +149,6 @@ class ExplanationPacket(BaseModel):
     unknowns: list[UnknownRef] = Field(default_factory=list)
     context_notes: list[ContextNote] = Field(default_factory=list)
     behavior_facts: list[BehaviorFunctionFact] = Field(default_factory=list)
-    impact_facts: list[ImpactFact] = Field(default_factory=list)
 
 
 class Statement(BaseModel):
@@ -206,31 +187,6 @@ class BehavioralNarrative(BaseModel):
     watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
-class ImpactAreaNote(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    area: str
-    summary: str
-    fact_ids: list[str] = Field(default_factory=list)
-
-
-class ImpactRiskNote(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    severity: str
-    risk: str
-    fact_ids: list[str] = Field(default_factory=list)
-
-
-class ImpactNarrative(BaseModel):
-    """Impact areas and reviewer risks, written from impact and behavior facts only."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    areas: list[ImpactAreaNote] = Field(default_factory=list)
-    risks: list[ImpactRiskNote] = Field(default_factory=list)
-
-
 class ExplanationDocument(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -245,8 +201,6 @@ class ExplanationDocument(BaseModel):
     behavioral_changes: BehavioralNarrative | None = None
     # Why the narrative was not kept. Set by the pipeline; hidden from the model's output schema.
     behavior_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
-    impact: ImpactNarrative | None = None
-    impact_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
         return [

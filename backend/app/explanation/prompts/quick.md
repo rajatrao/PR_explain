@@ -11,10 +11,3 @@ Also fill behavioral_changes from BEHAVIOR FACTS. It is read by reviewers of thi
 - overview: at most two sentences on the overall behavioral shift, in the same plain terms. watch: up to three questions a reviewer should check, each citing fact_ids.
 - If BEHAVIOR FACTS is empty, set behavioral_changes to null.
 
-Also fill impact from IMPACT FACTS and BEHAVIOR FACTS. A lead reviewer reads it to see, at a glance, which parts of the system this pull request affects and what could go wrong.
-- areas: up to five impact areas, most important first. area is a short name for a part of the system as a reviewer thinks of it (for example "Public API", "Data", "Configuration", "Dependencies", "Web interface", or the capability the affected entry points serve). summary is one or two sentences on how that area is affected, in terms of what clients, users, operators, or stored data experience.
-- risks: up to five risks, most severe first. risk says what could go wrong and for whom, in one sentence. severity is high, medium, or low. Each risk must cite at least one IMPACT FACT whose kind is risk; do not raise the severity above the highest severity among the risk facts it cites.
-- Stay high level: never name functions, methods, classes, variables, or files, and never write call syntax. Route paths, table and column names, setting names, package names, and public entry points from the facts may be named.
-- Do not report test coverage, file counts, or analysis limits. Do not guess intent, performance, or security beyond what the facts show.
-- fact_ids lists the impact (i1, i2, …) and behavior (b1, b2, …) ids each item rests on.
-- If IMPACT FACTS and BEHAVIOR FACTS are both empty, set impact to null.
