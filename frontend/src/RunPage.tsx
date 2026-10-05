@@ -500,34 +500,46 @@ const WRAP_FIRST_COLUMN = new Set([
 
 function ImpactSection({ section }: { section?: ImpactSummary }) {
   if (!section) return null;
-  const levels = section.levels ?? [];
+  const areas = section.areas ?? [];
+  const risks = section.risks ?? [];
   return (
     <section className="narrative impact-section">
       <h3>Impact</h3>
-      {levels.length === 0 ? <p>No impact beyond the changed code was found in the stored facts.</p> : null}
-      {levels.map((level) => (
-        <div className={`impact-level impact-${level.level}`} key={level.level}>
-          <span className="impact-label">{level.label}</span>
-          <div>
-            <p className="impact-summary">
-              <InlineCode text={level.summary} />
-            </p>
-            {level.details?.length ? (
-              <ul>
-                {level.details.map((item) => (
-                  <li key={item}>
-                    <InlineCode text={item} />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
+      {areas.length === 0 && risks.length === 0 ? (
+        <p>No impact on routes, data, configuration, dependencies, the web interface, or public entry points was found.</p>
+      ) : null}
+      {areas.length ? (
+        <div className="impact-areas">
+          <h4>Impact areas</h4>
+          {areas.map((item) => (
+            <div className="impact-level" key={item.area}>
+              <span className="impact-label">
+                <InlineCode text={item.area} />
+              </span>
+              <p className="impact-summary">
+                <InlineCode text={item.summary} />
+              </p>
+            </div>
+          ))}
         </div>
-      ))}
-      {levels.length ? (
+      ) : null}
+      {risks.length ? (
+        <div className="impact-risks">
+          <h4>Risks</h4>
+          <ul>
+            {risks.map((item) => (
+              <li key={item.risk}>
+                <span className={`severity severity-${item.severity}`}>{item.severity}</span>
+                <InlineCode text={item.risk} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {areas.length || risks.length ? (
         <p className="kicker">
           {section.source === "model"
-            ? "Written by the configured model from the impact and behavior facts; each level was checked against the facts it cites."
+            ? "Written by the configured model from the impact and behavior facts; each item was checked against the facts it cites."
             : section.note}
         </p>
       ) : null}

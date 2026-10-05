@@ -1,38 +1,40 @@
-"""Impact facts: what a pull request touches at each level, as grounded sentences.
+"""Impact facts: the areas a pull request touches and the reviewer risks they carry.
 
-Levels and their sources (all stored by analysis):
+Area facts (kind "area") say what is touched, in terms a reviewer recognises:
 
-* ``system``     entry points that reach changed behavior (behavior facts), files
-                 outside the diff that reach changed code (``reaches_changed``),
-                 files no path reaches (``behavior_unchanged``), contract changes on
-                 exported functions, and partial-view notes,
-* ``api``        HTTP routes added, removed, or changed (``surface_changed``),
-* ``data``       tables, columns, and model fields (``surface_changed``),
-* ``config``     environment variables and settings (``surface_changed``),
-* ``dependency`` packages (``surface_changed``, ``dependency_changed``),
-* ``ui``         web interface files (``surface_changed``),
-* ``testing``    stored test references for changed functions and changed test files.
+* Public API      HTTP routes added, removed, or changed,
+* Data            tables, columns, and model fields,
+* Configuration   environment variables and settings,
+* Dependencies    packages and versions,
+* Web interface   interface files,
+* Affected flows  public entry points that reach changed behavior.
 
-Each fact lists the behavior facts (``b…`` ids) in the same files, so a reader
-can tie a surface to the behavior that changed with it. File paths are not
-written into the sentences.
+Risk facts (kind "risk") are derived from the same findings with a fixed
+severity, so the severity is never the model's guess:
+
+* high    a route is removed, a table or column is dropped, or a head call site
+          passes a different number of arguments than a changed public signature,
+* medium  a new setting must be provided, a package crosses a major version,
+          a public function changes what callers must pass or is removed, a
+          schema change needs a migration, a route's declaration changes,
+* low     a package is added or removed, a setting is no longer read, an
+          example value changes.
+
+Sources: ``surface_changed`` claims (analysis of the diff lines) and behavior
+facts (entry points, signature changes, contract notes). Analyzer bookkeeping such
+as file counts, unreached files, and truncated call sites is not impact and is
+left out, and so is test coverage.
 """
 
 from __future__ import annotations
 
-from app.analyzer.parse import is_test_path
+import re
+
+from app.explanation.behavior_facts import param_delta
 from app.explanation.schema import BehaviorFunctionFact, ImpactFact
 
-LEVELS = ("system", "api", "data", "config", "dependency", "ui", "testing")
-LEVEL_LABEL = {
-    "system": "System",
-    "api": "API and contracts",
-    "data": "Data",
-    "config": "Configuration and operations",
-    "dependency": "Dependencies",
-    "ui": "User interface",
-    "testing": "Testing",
-}
+AREAS = ("Affected flows", "Public API", "Data", "Configuration", "Dependencies", "Web interface")
+SEVERITIES = ("high", "medium", "low")
 NAME_CAP = 6
 
 
@@ -44,110 +46,126 @@ def build_impact_facts(*, claims, evidences, behavior_facts: list[BehaviorFuncti
 
     facts: list[ImpactFact] = []
 
-    def add(level: str, text: str, behavior_ids: list[str] | None = None) -> None:
-        facts.append(ImpactFact(id=f"i{len(facts) + 1}", level=level, text=text, behavior_ids=_unique(behavior_ids or [])[:12]))
+    def add(kind: str, area: str, text: str, *, severity: str | None = None, behavior_ids=None) -> None:
+        item = ImpactFact(
+            id=f"i{len(facts) + 1}",
+            kind=kind,
+            area=area,
+            text=text,
+            severity=severity,
+            behavior_ids=_unique(list(behavior_ids or []))[:12],
+        )
+        if not any(existing.text == text for existing in facts):
+            facts.append(item)
 
-    # --- surfaces: api, data, config, dependency, ui ---------------------------------
-    grouped: dict[str, list[tuple[str, str, str, str]]] = {}
+    # --- affected flows ---------------------------------------------------------------
+    entries = _unique([name for fact in behavior_facts for name in fact.reached_from])
+    if entries:
+        shown = ", ".join(entries[:NAME_CAP]) + (f" and {len(entries) - NAME_CAP} more" if len(entries) > NAME_CAP else "")
+        add(
+            "area",
+            "Affected flows",
+            f"Changed behavior is reachable from public entry point{'s' if len(entries) != 1 else ''} {shown}.",
+            behavior_ids=[c.id for fact in behavior_facts if fact.reached_from for c in fact.changes],
+        )
+    for fact in behavior_facts:
+        if not fact.public:
+            continue
+        signature = next((c for c in fact.changes if c.kind == "signature" and c.before and c.after), None)
+        if signature is not None:
+            added, removed, defaults = param_delta(signature.before, signature.after, fact.file)
+            required = [name for name, optional in added if not optional]
+            parts = []
+            if required:
+                parts.append("must now pass " + ", ".join(required))
+            if removed:
+                parts.append("no longer pass " + ", ".join(removed))
+            for name, old, new in defaults:
+                parts.append(f"get {new} instead of {old} when they omit {name}")
+            if parts:
+                add("risk", "Affected flows", f"Callers of {fact.function} " + "; ".join(parts) + ".", severity="medium", behavior_ids=[signature.id])
+        for note in fact.notes:
+            if " passes " in note:
+                add("risk", "Affected flows", f"A caller may break: {note}", severity="high", behavior_ids=[c.id for c in fact.changes if c.kind == "signature"])
+        if fact.removed:
+            add("risk", "Affected flows", f"{fact.function} is no longer available to callers.", severity="medium", behavior_ids=[c.id for c in fact.changes])
+
+    # --- surfaces -----------------------------------------------------------------------
+    ui_files: list[tuple[str, str]] = []
     for claim in claims or []:
         if _kind(claim) != "surface_changed":
             continue
         for evidence_id in _evidence_ids(claim):
             evidence = evidence_by_id.get(evidence_id)
-            if evidence is None or not evidence.description:
-                continue
-            parts = evidence.description.split("|", 3)
+            parts = (evidence.description or "").split("|", 3) if evidence is not None else []
             if len(parts) != 4:
                 continue
-            level, kind, name, detail = parts
-            grouped.setdefault(level, []).append((kind, name, detail, evidence.file or ""))
-    for level in ("api", "data", "config", "dependency"):
-        for kind, name, detail, path in grouped.get(level, []):
-            add(level, _surface_sentence(level, kind, name, detail), ids_by_file.get(path))
-    ui = grouped.get("ui", [])
-    if ui:
-        counts = {kind: sum(1 for k, *_ in ui if k == kind) for kind in ("added", "changed", "removed")}
-        bits = [f"{n} {kind}" for kind, n in counts.items() if n]
-        ui_ids = [bid for _k, _n, _d, path in ui for bid in ids_by_file.get(path, [])]
-        add("ui", f"The web interface changes: {', '.join(bits)} interface file{'s' if len(ui) != 1 else ''}.", ui_ids)
-    if "dependency" not in grouped:
+            level, change, name, detail = parts
+            related = ids_by_file.get(evidence.file or "", [])
+            if level == "ui":
+                ui_files.append((change, evidence.file or ""))
+                continue
+            _surface(add, level, change, name, detail, related)
+    if ui_files:
+        counts = {change: sum(1 for c, _ in ui_files if c == change) for change in ("added", "changed", "removed")}
+        bits = [f"{n} {change}" for change, n in counts.items() if n]
+        related = [bid for _c, path in ui_files for bid in ids_by_file.get(path, [])]
+        add("area", "Web interface", f"The web interface changes ({', '.join(bits)} interface file{'s' if len(ui_files) != 1 else ''}).", behavior_ids=related)
+
+    if not any(fact.area == "Dependencies" for fact in facts):
         for claim in claims or []:
             if _kind(claim) == "dependency_changed":
-                add("dependency", _text(claim).replace("No call graph was inferred from the manifest.", "").strip())
-
-    # --- system --------------------------------------------------------------------------
-    entries = _unique([name for fact in behavior_facts for name in fact.reached_from])
-    public_ids = [change.id for fact in behavior_facts if fact.public for change in fact.changes]
-    if entries:
-        add(
-            "system",
-            f"Changed behavior is reachable from {len(entries)} public entry point{'s' if len(entries) != 1 else ''}: "
-            + ", ".join(entries[:NAME_CAP])
-            + (f" and {len(entries) - NAME_CAP} more" if len(entries) > NAME_CAP else "")
-            + ".",
-            [change.id for fact in behavior_facts if fact.reached_from for change in fact.changes],
-        )
-    reaching = [claim for claim in claims or [] if _kind(claim) == "reaches_changed" and not is_test_path(_subject(claim))]
-    if reaching:
-        add(
-            "system",
-            f"{len(reaching)} production file{'s' if len(reaching) != 1 else ''} outside this diff reach the changed code through stored call or import paths, so their runtime behavior can change without being edited.",
-            public_ids,
-        )
-    unchanged = sum(1 for claim in claims or [] if _kind(claim) == "behavior_unchanged")
-    if unchanged:
-        add("system", f"{unchanged} production file{'s have' if unchanged != 1 else ' has'} no stored call or import path into the changed code.")
-    contract = [fact for fact in behavior_facts if fact.public and any(c.kind == "signature" for c in fact.changes)]
-    if contract:
-        add(
-            "system",
-            f"{len(contract)} public function{'s change their' if len(contract) != 1 else ' changes its'} parameters, so their callers see a different contract.",
-            [c.id for fact in contract for c in fact.changes if c.kind == "signature"],
-        )
-        for fact in contract:
-            for note in fact.notes:
-                add("system", note, [c.id for c in fact.changes if c.kind == "signature"])
-    removed = [fact for fact in behavior_facts if fact.removed]
-    if removed:
-        add(
-            "system",
-            f"{len(removed)} function{'s are' if len(removed) != 1 else ' is'} no longer defined at the head commit.",
-            [c.id for fact in removed for c in fact.changes],
-        )
-    partial = sum(1 for claim in claims or [] if _kind(claim) in {"fanout_truncated", "ambiguous_call"})
-    if partial:
-        add("system", f"The caller view is partial: {partial} call site{'s were' if partial != 1 else ' was'} truncated or ambiguous.")
-
-    # --- testing -------------------------------------------------------------------------
-    changed_names = {_subject(claim) for claim in claims or [] if _kind(claim) == "symbol_changed"}
-    tested = {_subject(claim) for claim in claims or [] if _kind(claim) == "tests" and _subject(claim) in changed_names}
-    untested = {_subject(claim) for claim in claims or [] if _kind(claim) == "missing_test" and _subject(claim) in changed_names}
-    if changed_names:
-        add(
-            "testing",
-            f"{len(tested)} of {len(changed_names)} changed function{'s have' if len(changed_names) != 1 else ' has'} a stored test reference; {len(untested)} {'have' if len(untested) != 1 else 'has'} none.",
-            [c.id for fact in behavior_facts if fact.public and not fact.tests for c in fact.changes][:12],
-        )
-    test_files = [_subject(claim) for claim in claims or [] if _kind(claim) == "file_changed" and is_test_path(_subject(claim))]
-    if test_files:
-        add("testing", f"{len(test_files)} test file{'s change' if len(test_files) != 1 else ' changes'} in this pull request.")
+                add("area", "Dependencies", _text(claim).replace("No call graph was inferred from the manifest.", "").strip())
     return facts
 
 
-def _surface_sentence(level: str, kind: str, name: str, detail: str) -> str:
-    verb = {"added": "is added", "removed": "is removed", "changed": "changes"}.get(kind, kind)
+def _surface(add, level: str, change: str, name: str, detail: str, related: list[str]) -> None:
+    verb = {"added": "is added", "removed": "is removed", "changed": "changes"}.get(change, change)
     if level == "api":
-        return f"HTTP route {name} {verb}."
+        add("area", "Public API", f"Route {name} {verb}.", behavior_ids=related)
+        if change == "removed":
+            add("risk", "Public API", f"Route {name} is removed; clients that call it will no longer reach it.", severity="high", behavior_ids=related)
+        elif change == "changed":
+            add("risk", "Public API", f"The declaration of route {name} changes; check that existing clients still match it.", severity="medium", behavior_ids=related)
+        return
     if level == "data":
         noun, _, ident = name.partition(" ")
         if "dropped" in detail:
-            return f"The migration drops {noun} {ident}."
-        return f"Database {noun} {ident} {verb} ({detail})."
+            add("area", "Data", f"The {noun} {ident} is dropped.", behavior_ids=related)
+            add("risk", "Data", f"A migration drops the {noun} {ident}; data stored in it is lost when the migration runs.", severity="high", behavior_ids=related)
+        elif detail.startswith("ORM"):
+            add("area", "Data", f"The stored {noun} {ident} {verb} in the data model.", behavior_ids=related)
+        else:
+            add("area", "Data", f"The database {noun} {ident} {verb}.", behavior_ids=related)
+            if change == "added":
+                add("risk", "Data", f"The schema change for {noun} {ident} needs its migration applied wherever this is deployed.", severity="medium", behavior_ids=related)
+        return
     if level == "config":
-        return f"{detail[:1].upper() + detail[1:]} {name} {verb}."
+        add("area", "Configuration", f"The {detail} {name} {verb}.", behavior_ids=related)
+        if change == "added" and "example" not in detail:
+            add("risk", "Configuration", f"New setting {name}: every environment must provide it or rely on a default.", severity="medium", behavior_ids=related)
+        elif change == "removed" and "read by the code" in detail:
+            add("risk", "Configuration", f"Setting {name} is no longer read here; environments that still set it can drop it.", severity="low", behavior_ids=related)
+        return
     if level == "dependency":
-        return f"Package {name} {verb} ({detail})."
-    return f"{name} {verb}."
+        if change == "changed" and "→" in detail:
+            old, new = (part.strip() for part in detail.split("→", 1))
+            add("area", "Dependencies", f"Package {name} moves from {old} to {new}.", behavior_ids=related)
+            if _major(old) is not None and _major(new) is not None and _major(old) != _major(new):
+                add("risk", "Dependencies", f"Package {name} crosses a major version ({old} to {new}).", severity="medium", behavior_ids=related)
+        elif change == "added":
+            add("area", "Dependencies", f"Package {name} ({detail}) is added.", behavior_ids=related)
+            add("risk", "Dependencies", f"New package {name} becomes part of the build and runtime.", severity="low", behavior_ids=related)
+        elif change == "removed":
+            add("area", "Dependencies", f"Package {name} is removed.", behavior_ids=related)
+            add("risk", "Dependencies", f"Package {name} is removed; anything that still imports it will fail.", severity="low", behavior_ids=related)
+        else:
+            add("area", "Dependencies", f"Package {name} changes ({detail}).", behavior_ids=related)
+
+
+def _major(version: str) -> int | None:
+    match = re.search(r"\d+", version or "")
+    return int(match.group()) if match else None
 
 
 def _unique(items: list[str]) -> list[str]:
@@ -160,10 +178,6 @@ def _unique(items: list[str]) -> list[str]:
 
 def _kind(claim) -> str:
     return getattr(claim, "kind", "") or ""
-
-
-def _subject(claim) -> str:
-    return getattr(claim, "subject", None) or ""
 
 
 def _text(claim) -> str:
