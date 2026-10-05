@@ -1,6 +1,13 @@
 """Impact: what a reviewer should care about in this pull request.
 
-Five parts, each shown only when it has a grounded finding (Scope always):
+Two layers. ``build_impact`` derives findings by rule from stored facts (below). Those findings
+go into the packet as IMPACT FACTS; the configured model writes the reviewer-facing summary
+from them (overview, impact areas with severity, things worth checking), with no
+implementation details. ``screen_impact`` keeps an item only when it cites known facts, names
+no function, method, class, or file, uses no code token outside its cited facts, and is not
+rated above the most severe finding it cites. Without a usable summary the section says so.
+
+Rule-derived findings (Scope always; the rest when present):
 
 * Scope            localized, one workflow, several workflows, or cross-cutting, from the
                    entry points that reach changed behavior,
@@ -28,7 +35,8 @@ import re
 from app.analyzer.behavior import error_target
 from app.analyzer.parse import is_test_path
 from app.explanation.behavior_facts import param_delta
-from app.explanation.schema import BehaviorFunctionFact
+from app.explanation.behavioral_changes import Grounding
+from app.explanation.schema import BehaviorFunctionFact, ImpactAreaNote, ImpactFact, ImpactNarrative
 
 ATTENTION_CAP = 3
 DEPENDENT_CAP = 5
@@ -169,30 +177,6 @@ def build_impact(*, claims, evidences, behavior_facts: list[BehaviorFunctionFact
     }
 
 
-def render_impact_markdown(section: dict) -> str:
-    lines = ["### Impact", "", f"**Scope:** {section.get('scope') or 'No behavior change was found.'}"]
-    attention = section.get("attention") or []
-    if attention:
-        lines.extend(["", "**Needs attention**"])
-        for index, item in enumerate(attention, 1):
-            lines.append(f"{index}. **{item['severity'].capitalize()}: {item['title']}.** {item['why']}")
-    dependents = section.get("dependents") or []
-    if dependents:
-        lines.extend(["", "**Who depends on this**"])
-        for item in dependents:
-            calls = "; ".join(f"`{call}`" for call in item["calls"])
-            reaches = ", ".join(item["reaches"])
-            lines.append(f"- {item['entry']} — reaches {reaches}" + (f" via {calls}" if calls else ""))
-    verify = section.get("verify") or []
-    if verify:
-        lines.extend(["", "**Verify**"])
-        lines.extend(f"- [ ] {item}" for item in verify)
-    note = section.get("not_affected") or section.get("partial")
-    if note:
-        lines.extend(["", f"_{note}_"])
-    return "\n".join(lines).strip()
-
-
 # --- parts --------------------------------------------------------------------------------
 
 
@@ -318,3 +302,163 @@ def _evidence_ids(claim) -> list[str]:
 
 def _id(item):
     return getattr(item, "public_id", None) or getattr(item, "id", None)
+
+
+# --- model summary --------------------------------------------------------------------
+
+
+NO_FACTS = "No impact beyond the changed code was found."
+NO_SUMMARY = "An impact summary is not available for this commit: the model's summary was missing or did not pass the grounding check."
+AREA_CAP = 5
+WATCH_CAP = 3
+
+
+def build_impact_facts(*, claims, evidences, behavior_facts: list[BehaviorFunctionFact]) -> list[ImpactFact]:
+    """The rule-derived findings as packet facts the model may cite."""
+    section = build_impact(claims=claims, evidences=evidences, behavior_facts=behavior_facts)
+    ids_by_name = {fact.function: [c.id for c in fact.changes] for fact in behavior_facts}
+    facts: list[ImpactFact] = []
+
+    def add(kind: str, text: str, severity: str | None = None) -> None:
+        related = [bid for name, ids in ids_by_name.items() if name and re.search(rf"\b{re.escape(name)}\b", text) for bid in ids]
+        facts.append(ImpactFact(id=f"i{len(facts) + 1}", kind=kind, text=text, severity=severity, behavior_ids=related[:12]))
+
+    if section["scope"] and (section["attention"] or section["dependents"]):
+        add("scope", section["scope"])
+    for item in section["attention"]:
+        add("attention", f"{item['title']}. {item['why']}", item["severity"])
+    for item in section["dependents"]:
+        via = "; ".join(item["calls"])
+        add("dependents", f"{item['entry']} reaches {', '.join(item['reaches'])}" + (f" via {via}" if via else "") + ".")
+    for item in section["verify"]:
+        add("verify", item)
+    if section["not_affected"] or section["partial"]:
+        add("coverage", section["not_affected"] or section["partial"])
+    return facts
+
+
+def screen_impact(
+    narrative: ImpactNarrative | dict | None,
+    behavior_facts: list[BehaviorFunctionFact],
+    impact_facts: list[ImpactFact],
+    reasons: list[str] | None = None,
+) -> ImpactNarrative | None:
+    log = reasons if reasons is not None else []
+    if narrative is None:
+        log.append("the model returned no impact")
+        return None
+    if not impact_facts:
+        log.append("the packet had no impact facts")
+        return None
+    if isinstance(narrative, dict):
+        narrative = _parse(narrative)
+        if narrative is None:
+            log.append("impact did not match the schema")
+            return None
+    grounding = Grounding(behavior_facts, impact_facts)
+    by_id = {fact.id: fact for fact in impact_facts}
+
+    def problem(text: str, allowed: str) -> str | None:
+        # No function, method, or caller names anywhere in Impact, entry points included.
+        return grounding.problem(text, allowed, may_name_entries=False)
+
+    areas: list[ImpactAreaNote] = []
+    for note in narrative.areas:
+        allowed = grounding.scope(note.fact_ids)
+        if allowed is None:
+            log.append(f"dropped '{note.title[:40]}': cites no known fact")
+            continue
+        issue = None
+        for text in (note.title, note.summary, note.who_notices):
+            if text:
+                issue = problem(text, allowed)
+                if issue:
+                    break
+        if issue:
+            log.append(f"dropped '{note.title[:40]}': {issue}")
+            continue
+        cited = [by_id[item].severity for item in note.fact_ids if item in by_id and by_id[item].severity]
+        ceiling = min((_RANK[item] for item in cited), default=_RANK["low"])
+        severity = (note.severity or "").strip().lower()
+        if severity not in _RANK or _RANK[severity] < ceiling:
+            severity = ["high", "medium", "low"][ceiling]
+        areas.append(note.model_copy(update={"severity": severity, "fact_ids": grounding.known(note.fact_ids)}))
+        if len(areas) >= AREA_CAP:
+            break
+    if not areas:
+        return None
+    areas.sort(key=lambda item: _RANK[item.severity])
+
+    watch = []
+    for note in narrative.watch:
+        allowed = grounding.scope(note.fact_ids)
+        if allowed is None or "?" not in note.text:
+            continue
+        if problem(note.text, allowed) is None:
+            watch.append(note)
+        if len(watch) >= WATCH_CAP:
+            break
+    overview = narrative.overview.strip()
+    everything = grounding.scope([fact.id for fact in impact_facts]) or ""
+    if overview and problem(overview, everything):
+        overview = ""
+    return ImpactNarrative(overview=overview, areas=areas, watch=watch)
+
+
+def build_impact_section(
+    *,
+    narrative: ImpactNarrative | dict | None,
+    behavior_facts: list[BehaviorFunctionFact],
+    impact_facts: list[ImpactFact],
+    prescreened: bool = False,
+    reasons: list[str] | None = None,
+) -> dict:
+    if prescreened and narrative:
+        chosen = narrative if isinstance(narrative, ImpactNarrative) else _parse(narrative)
+    else:
+        chosen = screen_impact(narrative, behavior_facts, impact_facts) if narrative else None
+    if chosen is None or not chosen.areas:
+        overview = NO_FACTS
+        if impact_facts:
+            why = [reason for reason in (reasons or []) if reason]
+            overview = NO_SUMMARY + (f" Reason: {why[0]}." if why else "")
+        return {"source": "none", "overview": overview, "areas": [], "watch": []}
+    return {
+        "source": "model",
+        "overview": chosen.overview,
+        "areas": [
+            {"title": note.title, "severity": note.severity, "summary": note.summary, "who_notices": note.who_notices}
+            for note in chosen.areas
+        ],
+        "watch": [note.text for note in chosen.watch],
+    }
+
+
+def render_impact_markdown(section: dict) -> str:
+    lines = ["### Impact", ""]
+    areas = section.get("areas") or []
+    if not areas:
+        lines.append(section.get("overview") or NO_FACTS)
+        return "\n".join(lines)
+    if section.get("overview"):
+        lines.extend([section["overview"], ""])
+    for area in areas:
+        lines.append(f"**{area['title']}** ({area['severity']})")
+        lines.append(f"- {area['summary']}")
+        if area.get("who_notices"):
+            lines.append(f"- **Who notices:** {area['who_notices']}")
+        lines.append("")
+    watch = section.get("watch") or []
+    if watch:
+        lines.append("**Worth checking**")
+        lines.extend(f"- {item}" for item in watch)
+        lines.append("")
+    lines.append("_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._")
+    return "\n".join(lines).strip()
+
+
+def _parse(narrative: dict) -> ImpactNarrative | None:
+    try:
+        return ImpactNarrative.model_validate(narrative)
+    except Exception:
+        return None
