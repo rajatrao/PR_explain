@@ -136,13 +136,20 @@ class BehaviorFunctionFact(BaseModel):
 
 
 class ImpactFact(BaseModel):
-    """One grounded impact fact at a level: system, api, data, config, dependency, ui, or testing."""
+    """One grounded impact fact.
+
+    kind "area": an impact area the pull request touches (public API, data, configuration,
+    dependencies, web interface, affected flows). kind "risk": a reviewer risk with a severity
+    derived from the fact itself (for example a dropped column or a removed route is high).
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     id: str
-    level: str
+    kind: str
+    area: str
     text: str
+    severity: str | None = None
     behavior_ids: list[str] = Field(default_factory=list)
 
 
@@ -199,21 +206,29 @@ class BehavioralNarrative(BaseModel):
     watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
-class ImpactLevelNote(BaseModel):
+class ImpactAreaNote(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    level: str
+    area: str
     summary: str
-    details: list[str] = Field(default_factory=list)
+    fact_ids: list[str] = Field(default_factory=list)
+
+
+class ImpactRiskNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    severity: str
+    risk: str
     fact_ids: list[str] = Field(default_factory=list)
 
 
 class ImpactNarrative(BaseModel):
-    """Impact of the pull request at each level, written from impact and behavior facts only."""
+    """Impact areas and reviewer risks, written from impact and behavior facts only."""
 
     model_config = ConfigDict(extra="ignore")
 
-    levels: list[ImpactLevelNote] = Field(default_factory=list)
+    areas: list[ImpactAreaNote] = Field(default_factory=list)
+    risks: list[ImpactRiskNote] = Field(default_factory=list)
 
 
 class ExplanationDocument(BaseModel):

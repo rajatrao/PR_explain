@@ -166,7 +166,7 @@ def execute_explain(
             _raw_field(result.content, "impact"), packet.behavior_facts, packet.impact_facts, impact_screening
         )
         document.impact_screening = impact_screening[:8]
-        impact_kept = len(document.impact.levels) if document.impact else 0
+        impact_kept = len(document.impact.areas) + len(document.impact.risks) if document.impact else 0
     _store_explanation(
         session,
         run,
@@ -194,7 +194,7 @@ def execute_explain(
                 "depth": depth,
                 "behavior_changes_kept": kept,
                 "behavior_screening": screening[:8],
-                "impact_levels_kept": impact_kept,
+                "impact_items_kept": impact_kept,
                 "impact_screening": impact_screening[:8],
             }
             if depth == "quick"

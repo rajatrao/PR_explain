@@ -556,17 +556,16 @@ class _NarratingProvider:
             ],
             "watch": [],
         }
-        system_ids = [fact.id for fact in request.packet.impact_facts if fact.level == "system"]
+        flow_ids = [fact.id for fact in request.packet.impact_facts if fact.area == "Affected flows" and fact.kind == "area"]
+        risk_ids = [fact.id for fact in request.packet.impact_facts if fact.kind == "risk"]
         document["impact"] = {
-            "levels": [
-                {
-                    "level": "system",
-                    "summary": "Every sign-in path now creates sessions with an explicit TTL.",
-                    "details": ["All three sign-in entry points pass a TTL."],
-                    "fact_ids": system_ids,
-                },
-                {"level": "data", "summary": "Sessions move to the `sessions_v2` table.", "fact_ids": system_ids},
-            ]
+            "areas": [
+                {"area": "Sign-in", "summary": "Every sign-in path now creates sessions with an explicit TTL.", "fact_ids": flow_ids},
+                {"area": "Storage", "summary": "Sessions move to the `sessions_v2` table.", "fact_ids": flow_ids},
+            ],
+            "risks": [
+                {"severity": "high", "risk": "Any caller that does not pass a TTL stops working.", "fact_ids": risk_ids[:1]},
+            ],
         }
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 
@@ -593,8 +592,10 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     assert "redisClient" not in posted
     impact = body["impact"]
     assert impact["source"] == "model"
-    assert [level["level"] for level in impact["levels"]] == ["system"]
-    assert "**System** — Every sign-in path now creates sessions with an explicit TTL." in posted
+    assert [area["area"] for area in impact["areas"]] == ["Sign-in"]
+    # The cited risk fact is medium (a contract change), so a "high" from the model is capped.
+    assert impact["risks"] == [{"severity": "medium", "risk": "Any caller that does not pass a TTL stops working."}]
+    assert "- **Sign-in** — Every sign-in path now creates sessions with an explicit TTL." in posted
     assert "sessions_v2" not in posted
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
     assert "### Old flow vs New flow" in details

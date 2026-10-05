@@ -1,39 +1,33 @@
-"""Impact: what the pull request affects at each level (system, API, data, configuration,
-dependencies, user interface, testing).
+"""Impact: the areas a pull request touches and the risks a reviewer should weigh.
 
-The configured model writes the impact from the packet's IMPACT FACTS and BEHAVIOR
-FACTS during the explanation step. Each level is kept only after it passes the same
-grounding check as Behavioral Changes (``Grounding``): it must cite known facts, name
-no function, method, class, or file (public entry points are allowed), and use no code
-token outside the facts it cites.
+The configured model writes up to five impact areas and up to five risks from the
+packet's IMPACT FACTS and BEHAVIOR FACTS during the explanation step. Each item is
+kept only after the same grounding check as Behavioral Changes (``Grounding``): it
+cites known facts, names no function, method, class, or file (public entry points
+are allowed), and uses no code token outside the facts it cites. A risk must cite at
+least one risk fact, and its severity can be no higher than the highest severity
+among the risk facts it cites.
 
-When the model's impact is missing or nothing survives, the section lists the impact
-facts themselves per level. Those sentences come from analysis (routes, tables,
-settings, packages, entry points, test coverage counts), not from the model.
+Without a usable model impact, the section shows the area and risk facts as they
+are. They come from analysis, not from the model.
 """
 
 from __future__ import annotations
 
 from app.explanation.behavioral_changes import Grounding
-from app.explanation.impact_facts import LEVEL_LABEL, LEVELS
-from app.explanation.schema import BehaviorFunctionFact, ImpactFact, ImpactLevelNote, ImpactNarrative
+from app.explanation.impact_facts import AREAS, SEVERITIES
+from app.explanation.schema import (
+    BehaviorFunctionFact,
+    ImpactAreaNote,
+    ImpactFact,
+    ImpactNarrative,
+    ImpactRiskNote,
+)
 
-DETAIL_CAP = 5
-FACT_CAP = 6
-
-_LEVEL_ALIASES = {
-    **{level: level for level in LEVELS},
-    **{label.lower(): level for level, label in LEVEL_LABEL.items()},
-    "api": "api",
-    "contracts": "api",
-    "database": "data",
-    "configuration": "config",
-    "operations": "config",
-    "dependencies": "dependency",
-    "user interface": "ui",
-    "frontend": "ui",
-    "tests": "testing",
-}
+AREA_CAP = 5
+RISK_CAP = 5
+FACTS_PER_AREA = 4
+_RANK = {severity: index for index, severity in enumerate(SEVERITIES)}
 
 
 def screen_impact(
@@ -50,36 +44,51 @@ def screen_impact(
         log.append("the packet had no impact facts")
         return None
     if isinstance(narrative, dict):
-        try:
-            narrative = ImpactNarrative.model_validate(narrative)
-        except Exception:
+        narrative = _parse(narrative)
+        if narrative is None:
             log.append("impact did not match the schema")
             return None
     grounding = Grounding(behavior_facts, impact_facts)
-    kept: list[ImpactLevelNote] = []
-    seen: set[str] = set()
-    for note in narrative.levels:
-        level = _LEVEL_ALIASES.get((note.level or "").strip().lower())
-        if level is None or level in seen:
-            log.append(f"dropped impact level '{note.level[:30]}': unknown or repeated level")
-            continue
+    by_id = {fact.id: fact for fact in impact_facts}
+
+    areas: list[ImpactAreaNote] = []
+    for note in narrative.areas:
         allowed = grounding.scope(note.fact_ids)
         if allowed is None:
-            log.append(f"dropped impact level '{level}': cites no known fact")
+            log.append(f"dropped area '{note.area[:30]}': cites no known fact")
             continue
-        issue = grounding.problem(note.summary, allowed, may_name_entries=True)
-        if issue:
-            log.append(f"dropped impact level '{level}': {issue}")
-            continue
-        details = [item for item in note.details if grounding.problem(item, allowed, may_name_entries=True) is None]
-        kept.append(
-            ImpactLevelNote(level=level, summary=note.summary, details=details[:DETAIL_CAP], fact_ids=grounding.known(note.fact_ids))
+        issue = grounding.problem(note.area, allowed, may_name_entries=False) or grounding.problem(
+            note.summary, allowed, may_name_entries=True
         )
-        seen.add(level)
-    if not kept:
+        if issue:
+            log.append(f"dropped area '{note.area[:30]}': {issue}")
+            continue
+        areas.append(note.model_copy(update={"fact_ids": grounding.known(note.fact_ids)}))
+        if len(areas) >= AREA_CAP:
+            break
+
+    risks: list[ImpactRiskNote] = []
+    for note in narrative.risks:
+        cited = [by_id[item] for item in note.fact_ids if item in by_id and by_id[item].kind == "risk"]
+        if not cited:
+            log.append(f"dropped risk '{note.risk[:30]}': cites no risk fact")
+            continue
+        allowed = grounding.scope(note.fact_ids) or ""
+        issue = grounding.problem(note.risk, allowed, may_name_entries=True)
+        if issue:
+            log.append(f"dropped risk '{note.risk[:30]}': {issue}")
+            continue
+        ceiling = min(_RANK.get(fact.severity or "low", 2) for fact in cited)
+        severity = (note.severity or "").strip().lower()
+        if severity not in _RANK or _RANK[severity] < ceiling:
+            severity = SEVERITIES[ceiling]
+        risks.append(note.model_copy(update={"severity": severity, "fact_ids": grounding.known(note.fact_ids)}))
+        if len(risks) >= RISK_CAP:
+            break
+    risks.sort(key=lambda item: _RANK[item.severity])
+    if not areas and not risks:
         return None
-    kept.sort(key=lambda item: LEVELS.index(item.level))
-    return ImpactNarrative(levels=kept)
+    return ImpactNarrative(areas=areas, risks=risks)
 
 
 def build_impact_section(
@@ -94,49 +103,50 @@ def build_impact_section(
         chosen = narrative if isinstance(narrative, ImpactNarrative) else _parse(narrative)
     else:
         chosen = screen_impact(narrative, behavior_facts, impact_facts) if narrative else None
-    if chosen is not None and chosen.levels:
+    if chosen is not None and (chosen.areas or chosen.risks):
         return {
             "source": "model",
-            "levels": [
-                {"level": note.level, "label": LEVEL_LABEL.get(note.level, note.level), "summary": note.summary, "details": note.details}
-                for note in chosen.levels
-            ],
+            "areas": [{"area": note.area, "summary": note.summary} for note in chosen.areas],
+            "risks": [{"severity": note.severity, "risk": note.risk} for note in chosen.risks],
             "note": "",
         }
-    levels = []
-    for level in LEVELS:
-        texts = [fact.text for fact in impact_facts if fact.level == level]
-        if not texts:
-            continue
-        levels.append(
-            {
-                "level": level,
-                "label": LEVEL_LABEL[level],
-                "summary": texts[0],
-                "details": texts[1:FACT_CAP],
-            }
-        )
+
+    areas = []
+    for area in AREAS:
+        texts = [fact.text for fact in impact_facts if fact.kind == "area" and fact.area == area]
+        if texts:
+            summary = " ".join(texts[:FACTS_PER_AREA])
+            if len(texts) > FACTS_PER_AREA:
+                summary += f" ({len(texts) - FACTS_PER_AREA} more.)"
+            areas.append({"area": area, "summary": summary})
+    risks = sorted(
+        ({"severity": fact.severity or "low", "risk": fact.text} for fact in impact_facts if fact.kind == "risk"),
+        key=lambda item: _RANK.get(item["severity"], 2),
+    )[: RISK_CAP + 3]
     why = [reason for reason in (reasons or []) if reason]
     note = ""
-    if levels and why:
-        note = f"Listed from the analysis facts; the model's impact summary was not used ({why[0]})."
-    elif levels:
-        note = "Listed from the analysis facts."
-    return {"source": "facts", "levels": levels, "note": note}
+    if areas or risks:
+        note = "Listed from the analysis facts" + (f"; the model's impact summary was not used ({why[0]})." if why else ".")
+    return {"source": "facts", "areas": areas, "risks": risks, "note": note}
 
 
 def render_impact_markdown(section: dict) -> str:
     lines = ["### Impact", ""]
-    levels = section.get("levels") or []
-    if not levels:
-        lines.append("No impact beyond the changed code was found in the stored facts.")
+    areas = section.get("areas") or []
+    risks = section.get("risks") or []
+    if not areas and not risks:
+        lines.append("No impact on routes, data, configuration, dependencies, the web interface, or public entry points was found.")
         return "\n".join(lines)
-    for level in levels:
-        lines.append(f"**{level['label']}** — {level['summary']}")
-        lines.extend(f"  - {item}" for item in level.get("details") or [])
-    lines.append("")
+    if areas:
+        lines.append("**Impact areas**")
+        lines.extend(f"- **{item['area']}** — {item['summary']}" for item in areas)
+        lines.append("")
+    if risks:
+        lines.append("**Risks**")
+        lines.extend(f"- **{item['severity'].capitalize()}** — {item['risk']}" for item in risks)
+        lines.append("")
     if section.get("source") == "model":
-        lines.append("_Written by the configured model from the impact and behavior facts; each level was checked against the facts it cites._")
+        lines.append("_Written by the configured model from the impact and behavior facts; each item was checked against the facts it cites._")
     elif section.get("note"):
         lines.append(f"_{section['note']}_")
     return "\n".join(lines).strip()

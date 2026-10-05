@@ -176,6 +176,7 @@ export type BehaviorFlows = {
 
 export type ImpactSummary = {
   source: "model" | "facts";
-  levels: { level: string; label: string; summary: string; details: string[] }[];
+  areas: { area: string; summary: string }[];
+  risks: { severity: "high" | "medium" | "low"; risk: string }[];
   note: string;
 };

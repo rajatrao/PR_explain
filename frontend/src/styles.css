@@ -447,3 +447,11 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 @media (max-width: 800px) {
   .impact-level { grid-template-columns: 1fr; }
 }
+.impact-section h4 { margin: 12px 0 4px; font-size: 15px; font-weight: 600; }
+.impact-risks ul { list-style: none; margin: 0; padding: 0; }
+.impact-risks li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid #ebe4d8; }
+.impact-risks li:first-child { border-top: 0; }
+.severity { flex: none; min-width: 62px; text-align: center; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 10px; padding: 1px 8px; border: 1px solid; }
+.severity-high { color: #7b241c; border-color: #c0392b; background: #fdecea; }
+.severity-medium { color: #7e5109; border-color: #b9770e; background: #fef5e7; }
+.severity-low { color: #5a5146; border-color: #b9ad9b; background: #f3efe6; }

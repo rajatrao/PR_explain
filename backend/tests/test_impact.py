@@ -63,71 +63,83 @@ def _claims_and_evidence():
 def _behavior():
     return [
         BehaviorFunctionFact(
-            function="retry_run",
-            file="backend/app/api.py",
+            function="createSession",
+            file="src/session.ts",
             public=True,
-            reached_from=["retry_run"],
-            changes=[BehaviorChangeFact(id="b1", claim_id="x", kind="error", after='raise HTTPException(status_code=409, detail="run is not failed")', after_when="run.analysis_status != 'failed'")],
+            reached_from=["login", "googleCallback"],
+            notes=["createSession now declares 2 required parameters; login passes 1 argument."],
+            changes=[
+                BehaviorChangeFact(
+                    id="b1",
+                    claim_id="x",
+                    kind="signature",
+                    before="export function createSession(userId: string): string {",
+                    after="export function createSession(userId: string, ttlMs: number): string {",
+                )
+            ],
         )
     ]
 
 
-def test_impact_facts_by_level_without_file_paths():
+def test_impact_facts_are_areas_and_risks_without_analysis_bookkeeping():
     claims, evidences = _claims_and_evidence()
+    claims.append(Claim(id="r1", epistemic="FACT", kind="reaches_changed", text="x reaches y", subject="src/a.ts"))
+    claims.append(Claim(id="u1", epistemic="INFERENCE", kind="behavior_unchanged", text="unchanged", subject="src/b.ts"))
+    claims.append(Claim(id="t1", epistemic="UNKNOWN", kind="fanout_truncated", text="12 further callers omitted.", subject="f"))
+    claims.append(Claim(id="m1", epistemic="UNKNOWN", kind="missing_test", text="No test references f.", subject="f"))
     facts = build_impact_facts(claims=claims, evidences=evidences, behavior_facts=_behavior())
-    by_level = {}
-    for fact in facts:
-        by_level.setdefault(fact.level, []).append(fact)
-    assert [f.text for f in by_level["api"]] == ["HTTP route POST /api/runs/{id}/retry is added."]
-    assert by_level["api"][0].behavior_ids == ["b1"]
-    assert "Database column analysis_runs.behavior is added (column)." in [f.text for f in by_level["data"]]
-    assert "The migration drops column runs.old." in [f.text for f in by_level["data"]]
-    assert "Package mermaid changes (^10.0.0 → ^11.0.0)." in [f.text for f in by_level["dependency"]]
-    assert by_level["ui"][0].text == "The web interface changes: 1 changed interface file."
-    assert by_level["system"][0].text == "Changed behavior is reachable from 1 public entry point: retry_run."
-    assert not any("/" in f.text and ".py" in f.text for f in facts)
+    areas = {(f.area, f.text) for f in facts if f.kind == "area"}
+    risks = {(f.severity, f.text) for f in facts if f.kind == "risk"}
+    assert ("Affected flows", "Changed behavior is reachable from public entry points login, googleCallback.") in areas
+    assert ("Public API", "Route POST /api/runs/{id}/retry is added.") in areas
+    assert ("Data", "The table behavior_facts is dropped.") not in areas
+    assert ("high", "A migration drops the column runs.old; data stored in it is lost when the migration runs.") in risks
+    assert ("high", "A caller may break: createSession now declares 2 required parameters; login passes 1 argument.") in risks
+    assert ("medium", "Callers of createSession must now pass ttlMs.") in risks
+    assert ("medium", "Package mermaid crosses a major version (^10.0.0 to ^11.0.0).") in risks
+    assert ("medium", "New setting API_KEY: every environment must provide it or rely on a default.") in risks
+    blob = " ".join(f.text for f in facts)
+    for noise in ("production file", "call sites were", "truncated", "test", "Testing", ".py", ".ts"):
+        assert noise not in blob, noise
 
     section = build_impact_section(narrative=None, behavior_facts=_behavior(), impact_facts=facts)
     assert section["source"] == "facts"
-    assert [level["label"] for level in section["levels"]][:3] == ["System", "API and contracts", "Data"]
+    assert [risk["severity"] for risk in section["risks"]][:2] == ["high", "high"]
     markdown = render_impact_markdown(section)
-    assert markdown.startswith("### Impact")
-    assert "**API and contracts** — HTTP route POST /api/runs/{id}/retry is added." in markdown
+    assert "**Impact areas**" in markdown and "**Risks**" in markdown
+    assert "- **High** — A migration drops the column runs.old" in markdown
 
 
-def test_model_impact_is_screened_per_level():
+def test_model_impact_is_screened_and_severity_is_capped_by_the_facts():
     claims, evidences = _claims_and_evidence()
     facts = build_impact_facts(claims=claims, evidences=evidences, behavior_facts=_behavior())
-    api_id = next(f.id for f in facts if f.level == "api")
-    data_ids = [f.id for f in facts if f.level == "data"]
+    fid = {f.text: f.id for f in facts}
+    api_area = fid["Route POST /api/runs/{id}/retry is added."]
+    major = fid["Package mermaid crosses a major version (^10.0.0 to ^11.0.0)."]
+    drop = fid["A migration drops the column runs.old; data stored in it is lost when the migration runs."]
     narrative = ImpactNarrative.model_validate(
         {
-            "levels": [
-                {
-                    "level": "api",
-                    "summary": "Clients gain a `POST /api/runs/{id}/retry` endpoint that answers 409 when the run has not failed.",
-                    "details": ["Calling it through `retry_run()` is the only way in."],
-                    "fact_ids": [api_id, "b1"],
-                },
-                {
-                    "level": "data",
-                    "summary": "Each run stores a new `behavior` column, and the old `runs.old` column is dropped, so its values are lost.",
-                    "fact_ids": data_ids,
-                },
-                {"level": "data", "summary": "Duplicate level.", "fact_ids": data_ids},
-                {"level": "security", "summary": "Tokens are safer.", "fact_ids": [api_id]},
-                {"level": "config", "summary": "Operators must set `REDIS_URL`.", "fact_ids": [api_id]},
-                {"level": "ui", "summary": "The page now renders in backend/app/api.py.", "fact_ids": [api_id]},
-            ]
+            "areas": [
+                {"area": "Run retries", "summary": "Clients can retry a failed run through `POST /api/runs/{id}/retry`.", "fact_ids": [api_area]},
+                {"area": "Sessions", "summary": "Sessions now go through `createSession()`.", "fact_ids": [api_area]},
+                {"area": "Caching", "summary": "Results are cached in `REDIS_URL`.", "fact_ids": [api_area]},
+            ],
+            "risks": [
+                {"severity": "high", "risk": "The diagram renderer moves to a new major version and may render differently.", "fact_ids": [major]},
+                {"severity": "medium", "risk": "Existing values in runs.old are lost on upgrade.", "fact_ids": [drop]},
+                {"severity": "high", "risk": "The new route has no auth.", "fact_ids": [api_area]},
+            ],
         }
     )
     reasons: list[str] = []
     kept = screen_impact(narrative, _behavior(), facts, reasons)
-    assert [level.level for level in kept.levels] == ["api", "data"]
-    # A detail that writes call syntax is dropped; the level's summary stays.
-    assert kept.levels[0].details == []
-    assert any("REDIS_URL" in reason for reason in reasons)
-    assert any("named a file" in reason for reason in reasons)
+    assert [area.area for area in kept.areas] == ["Run retries"]
+    # Severity cannot exceed the cited risk fact (medium); a lower severity is kept as written.
+    assert [(risk.severity, risk.risk[:24]) for risk in kept.risks] == [
+        ("medium", "The diagram renderer mov"),
+        ("medium", "Existing values in runs."),
+    ]
+    assert any("cites no risk fact" in reason for reason in reasons)
     section = build_impact_section(narrative=kept, behavior_facts=_behavior(), impact_facts=facts, prescreened=True)
     assert section["source"] == "model"
     assert "Written by the configured model" in render_impact_markdown(section)
