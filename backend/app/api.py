@@ -400,6 +400,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         "explain_bullets": explain_bullets(run.claims, run.symbols),
         "behavioral_changes": build_behavioral_section(
             narrative=_quick_narrative(explanations),
+            reasons=_quick_screening(explanations),
             facts=build_behavior_facts(
                 symbols=run.symbols,
                 relationships=run.relationships_,
@@ -460,6 +461,22 @@ def _quick_narrative(explanations: dict) -> dict | None:
         return None
     narrative = document.get("behavioral_changes")
     return narrative if isinstance(narrative, dict) else None
+
+
+def _quick_screening(explanations: dict) -> list[str]:
+    """Why the behavioral narrative is missing: the stored screening reasons, or the Quick status."""
+    quick = explanations.get("quick") or {}
+    status = quick.get("status")
+    if status != "succeeded":
+        if status in {"queued", "running"}:
+            return ["the explanation step is still running"]
+        if status == "failed":
+            return ["the explanation step failed" + (f" ({quick.get('error')})" if quick.get("error") else "")]
+        return ["the explanation step has not run for this commit"]
+    document = quick.get("document") if isinstance(quick.get("document"), dict) else {}
+    if "behavior_screening" not in document and "behavioral_changes" not in document:
+        return ["this commit was explained before behavioral summaries existed; run the explanation again"]
+    return [str(item) for item in document.get("behavior_screening") or []]
 
 
 def _document_texts(explanations: dict, field: str) -> list[str]:

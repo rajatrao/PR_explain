@@ -521,9 +521,18 @@ class _NarratingProvider:
     def explain(self, request):  # noqa: ANN001
         self.calls += 1
         self.packets.append(request.packet)
-        from app.explanation.narrate import compose_document
-
-        document = compose_document(request.packet).model_dump(mode="json")
+        # Like the real quick prompt: a summary and empty statement arrays. The pipeline then keeps its
+        # packet-built document, and the narrative must still be read from this raw reply.
+        document = {
+            "summary": "Session creation now takes a TTL.",
+            "change_flow": [],
+            "impacts": [],
+            "important_changes": [],
+            "tests": [],
+            "unchanged": [],
+            "unknowns": [],
+            "review_questions": [],
+        }
         facts = request.packet.behavior_facts
         session = next(fact for fact in facts if fact.function == "createSession")
         ids = [change.id for change in session.changes]
@@ -569,3 +578,17 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     posted = comments.bodies[-1]
     assert "**Session token format**" in posted
     assert "redisClient" not in posted
+
+
+def test_missing_narrative_reason_is_shown(db):
+    snapshot = load_oauth_snapshot()
+    run = _revision(db, snapshot)
+    source = CountingSource(snapshot)
+    settings = get_settings()
+    provider = _EmptyStatements()
+    process_available_job(db, settings, snapshot_source=source, provider=provider)
+    process_available_job(db, settings, snapshot_source=source, provider=provider, comment_client=MemoryComments())
+    body = TestClient(app).get(f"/api/runs/{run.id}").json()
+    section = body["behavioral_changes"]
+    assert section["source"] == "none"
+    assert section["overview"].endswith("Reason: the model returned no behavioral_changes.")
