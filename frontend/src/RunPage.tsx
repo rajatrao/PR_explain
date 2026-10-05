@@ -465,7 +465,7 @@ const DETAILS_ORDER = [
   "Unchanged boundary",
 ];
 
-const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention", "Unknowns"]);
+const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention", "Unknowns", "Risk Areas", "What changed"]);
 
 const DETAIL_ROW_LIMIT = 20;
 

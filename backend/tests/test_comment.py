@@ -183,7 +183,6 @@ class _Claim:
 _DETAILS_ORDER = [
     "### High-level areas affected",
     "### Key Changes",
-    "### What changed",
     "### Change flow",
     "### Shared code",
     "### Why a file outside the diff matters",
@@ -228,7 +227,7 @@ def test_combined_comment_reuses_explain_and_retires_details():
     places = [details.index(title) for title in _DETAILS_ORDER]
     assert places == sorted(places)
     assert "### Reviewer Attention" not in details
-    assert "What changed" in details
+    assert "### What changed" not in details  # removed from Details
     assert "### Impact" not in details
     assert "### Impact" not in details
     assert "### Impact" in explain
@@ -275,7 +274,7 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert OLD not in stored
     assert "old prose" not in stored
     assert "### Summary" not in stored
-    assert "What changed" in stored
+    assert "### What changed" not in stored
     assert comments.comments[details_id] == RETIRED_DETAILS_NOTE
 
     failed_sha = "c" * 40
@@ -369,7 +368,8 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     )
     explain, rest = body.split("## Details for", 1)
     details, review = rest.split("## Review for", 1)
-    assert details.index("### What changed") < details.index("### Changes") < details.index("### Change flow")
+    assert "### What changed" not in details
+    assert details.index("### Changes") < details.index("### Change flow")
     assert "<summary>Tests</summary>" in details
     assert "<summary>Unchanged boundary</summary>" in details
     assert details.count("<details>") == 4
