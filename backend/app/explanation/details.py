@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from app.analyzer.parse import is_dunder_name, is_package_marker, is_private_python_name, is_test_path
-from app.explanation.flow_review import build_flow_rows
+from app.explanation.key_changes import build_key_rows, build_outside_rows
 from app.explanation.explain_view import function_file_by_name, private_python_hidden_names, without_hidden_symbols
 
 _AREAS = ("API", "Database", "Auth", "Frontend", "Backend", "Tests", "Dependencies", "Configuration")
@@ -34,9 +34,11 @@ _DEPENDENCY_NAMES = {
 }
 
 
+OUTSIDE_TITLE = "Callers outside the diff"
+
 _TABLE_HEADERS = {
     "High-level areas affected": ("Area", "Names"),
-    "Key Changes": ("Change", "Location"),
+    "Key Changes": ("Function", "What it means for callers"),
     "Risk Areas": ("Where", "Why look"),
 }
 _KEY_LIMIT = 6
@@ -75,24 +77,26 @@ def build_details(
     evidence_by_id = _evidence_index(evidences)
     built: list[dict] = [
         {"title": "High-level areas affected", "rows": _area_rows(symbols, claims, evidence_by_id, repo, sha)},
-        {"title": "Key Changes", "rows": _key_rows(symbols, claims, evidence_by_id, repo, sha)},
+        {
+            "title": "Key Changes",
+            "rows": _key_change_rows(symbols, relationships, claims, evidences, evidence_by_id, repo, sha),
+        },
     ]
     _append_section(built, "Risk Areas", _risk_rows(symbols, claims, evidence_by_id, repo, sha), drop_empty=True)
     built.extend(
         [
             {"title": "What changed", "rows": _changed_rows(symbols, claims, evidence_by_id, repo, sha)},
-            {
-                "title": "Change flow",
-                "rows": build_flow_rows(
-                    symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
-                ),
-            },
         ]
     )
     built.extend(
         [
             {"title": "Shared code", "rows": _shared_rows(symbols, relationships)},
-            {"title": "Why a file outside the diff matters", "rows": _outside_rows(claims, evidence_by_id, repo, sha)},
+            {
+                "title": OUTSIDE_TITLE,
+                "rows": build_outside_rows(
+                    symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
+                ),
+            },
             {"title": "Tests", "rows": _test_rows(claims)},
             {"title": "Unchanged boundary", "rows": _boundary_rows(claims)},
             {
@@ -196,9 +200,6 @@ def render_details_markdown(details: dict) -> str:
     blocks: list[str] = []
     for section in details.get("sections") or []:
         title = section.get("title")
-        if title == "Change flow":
-            blocks.append(_change_flow_markdown(section))
-            continue
         headers = _TABLE_HEADERS.get(title or "")
         if headers:
             blocks.append(_two_column_markdown(section, headers[0], headers[1]))
@@ -247,75 +248,10 @@ def _bullet_lines(rows: list) -> list[str]:
         value = row.get("value") or "none found"
         href = row.get("href")
         shown = f"[{value}]({href})" if href else value
-        lines.append(f"- **{row.get('label') or 'Item'}** — {shown}")
-    return lines
-
-
-_VISIBLE_FLOWS = 3
-
-
-def _change_flow_markdown(section: dict) -> str:
-    """One bullet per flow (entry → … → changed function) with its facts nested under it.
-
-    The first few flows are open; the rest fold into a collapsed block, never splitting a flow.
-    """
-    lines = ["### Change flow", ""]
-    groups = _flow_groups(section.get("rows") or [])
-    if not groups:
-        lines.append("- **Item** — none found")
-        return "\n".join(lines)
-    shown, hidden = groups[:_VISIBLE_FLOWS], groups[_VISIBLE_FLOWS:]
-    lines.extend(_flow_group_lines(shown))
-    if hidden:
-        lines.extend(_collapsed_block(len(hidden), _flow_group_lines(hidden)))
-    return "\n".join(lines)
-
-
-def _flow_groups(rows: list) -> list[tuple[str, list]]:
-    groups: list[tuple[str, list]] = []
-    for row in rows:
-        label = row.get("label") or "Item"
-        if groups and groups[-1][0] == label:
-            groups[-1][1].append(row)
-        else:
-            groups.append((label, [row]))
-    return groups
-
-
-def _flow_group_lines(groups: list[tuple[str, list]]) -> list[str]:
-    lines: list[str] = []
-    for label, grouped in groups:
-        lines.append(f"- **{label}**")
-        for row in grouped:
-            lines.append(f"  - {_flow_value(row)}")
-    return lines
-
-
-def _flow_value(row: dict) -> str:
-    """Bold the fact name ("What changes", "Call at head", …) and link only the location."""
-    value = str(row.get("value") or "none found")
-    href = row.get("href")
-    name, sep, rest = value.partition(": ")
-    text = f"**{name}:** {rest}" if sep and len(name) <= 20 else value
-    return f"{text} ([code]({href}))" if href else text
-
-
-def _change_flow_lines(rows: list) -> list[str]:
-    groups: list[tuple[str, list]] = []
-    for row in rows:
-        label = row.get("label") or "Item"
-        if groups and groups[-1][0] == label:
-            groups[-1][1].append(row)
-        else:
-            groups.append((label, [row]))
-    lines: list[str] = []
-    for label, grouped in groups:
-        lines.append(f"- **{label}**")
-        for row in grouped:
-            value = row.get("value") or "none found"
-            href = row.get("href")
-            shown = f"[{value}]({href})" if href else value
-            lines.append(f"  - {shown}")
+        label = f"**{row.get('label') or 'Item'}**"
+        if row.get("label_href"):
+            label = f"[{label}]({row['label_href']})"
+        lines.append(f"- {label} — {shown}")
     return lines
 
 
@@ -346,6 +282,8 @@ def _two_column_row_lines(rows: list) -> list[str]:
     lines = []
     for row in rows:
         label = _md_cell(row.get("label") or "Item")
+        if row.get("label_href"):
+            label = f"[{label}]({row['label_href']})"
         value = row.get("value") or "none found"
         href = row.get("href")
         shown = f"[{_md_cell(value)}]({href})" if href else _md_cell(value)
@@ -395,6 +333,24 @@ def _area_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dic
             value += f", {len(found) - len(shown)} more"
         rows.append(_row(area, value, None))
     return rows or [_row("Areas", "none found", None)]
+
+
+def _key_change_rows(symbols, relationships, claims, evidences, evidence_by_id, repo: str, sha: str) -> list[dict]:
+    """Changed functions with what they mean for callers; changed files when no function changed."""
+    changed = _changed_rows(symbols, claims, evidence_by_id, repo, sha)
+    symbol_rows = [row for row in changed if not _is_path(row.get("label") or "") and row.get("value") != "none found"]
+    rows = build_key_rows(
+        symbols=symbols,
+        relationships=relationships,
+        claims=claims,
+        evidences=evidences,
+        repo=repo,
+        sha=sha,
+        fallback_rows=symbol_rows,
+    )
+    if len(rows) == 1 and rows[0].get("value") == "none found":
+        return _key_rows(symbols, claims, evidence_by_id, repo, sha)
+    return rows
 
 
 def _key_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
@@ -815,21 +771,6 @@ def _changed_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
     return rows or [_row("Changed", "none found", None)]
 
 
-def _flow_rows(sections, repo: str, sha: str) -> list[dict]:
-    rows: list[dict] = []
-    for section in sections:
-        heading = section.get("heading") or "Change flow"
-        items = section.get("items") or []
-        if not items:
-            rows.append(_row(heading, "none found", None))
-            continue
-        for item in items:
-            text = item.get("text") or "none found"
-            detail = item.get("detail")
-            href = _href_for_location(repo, sha, detail) if detail else None
-            value = f"{text} ({detail})" if detail else text
-            rows.append(_row(heading, value, href))
-    return rows or [_row("Change flow", "none found", None)]
 
 
 def _shared_rows(symbols, relationships) -> list[dict]:
@@ -883,18 +824,6 @@ def _boundary_rows(claims) -> list[dict]:
     return rows or [_row("Boundary", "none found", None)]
 
 
-def _outside_rows(claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    rows: list[dict] = []
-    seen: set[str] = set()
-    for claim in claims:
-        if _kind(claim) not in {"file_reason", "reaches_changed"}:
-            continue
-        path = _subject(claim)
-        if not path or path in seen:
-            continue
-        seen.add(path)
-        rows.append(_row(path, _outside_reason(claim), _claim_href(claim, evidence_by_id, repo, sha)))
-    return rows or [_row("Outside the diff", "none found", None)]
 
 
 def _question_rows(claims, review_questions: list[str], attention_rows: list[dict]) -> list[dict]:
@@ -1010,13 +939,13 @@ def _path_area(path: str) -> str | None:
     return None
 
 
+
+
 def _outside_reason(claim) -> str:
     text = _claim_text(claim)
     match = re.search(r"reaches changed symbol (.+), so its behavior", text)
     if _kind(claim) == "reaches_changed" and match:
         return f"reaches changed symbol {match.group(1)}"
-    if _kind(claim) == "file_reason":
-        return _sentence(claim)
     return _sentence(claim)
 
 

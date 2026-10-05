@@ -460,23 +460,3 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 .impact-dependents ul, .impact-verify ul { margin: 0; padding-left: 18px; font-size: 14px; }
 .diagram-legend { margin: 6px 0 0; }
 
-.change-flow .flow-card {
-  border: 1px solid var(--border, #d0d7de);
-  border-left: 3px solid #d97706;
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin: 8px 0;
-}
-.change-flow .flow-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 600;
-  margin-bottom: 4px;
-  overflow-wrap: anywhere;
-}
-.change-flow .flow-card ul {
-  margin: 0;
-  padding-left: 18px;
-}
-.change-flow .flow-card li {
-  margin: 2px 0;
-}

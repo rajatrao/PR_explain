@@ -15,9 +15,8 @@ _LIMIT = 60000
 _DETAILS_TITLES = (
     "High-level areas affected",
     "Key Changes",
-    "Change flow",
     "Shared code",
-    "Why a file outside the diff matters",
+    "Callers outside the diff",
     "Tests",
     "Unchanged boundary",
 )
@@ -273,8 +272,8 @@ def _insert_changes(details_md: str, changes_md: str) -> str:
     heading = "### What changed"
     start = details_md.find(heading)
     if start == -1:
-        # Details no longer has a What changed section: the file diffs go just before Change flow.
-        anchor = details_md.find("### Change flow")
+        # Details no longer has a What changed section: the file diffs go just after Key Changes.
+        anchor = details_md.find("### Shared code")
         if anchor == -1:
             return f"{details_md.rstrip()}\n\n{changes_md.rstrip()}\n" if details_md else changes_md
         return f"{details_md[:anchor].rstrip()}\n\n{changes_md.rstrip()}\n\n{details_md[anchor:].lstrip()}"
