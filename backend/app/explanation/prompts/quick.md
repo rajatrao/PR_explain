@@ -20,3 +20,12 @@ Also fill impact from IMPACT FACTS and BEHAVIOR FACTS, the same way as behaviora
 - Only state what the cited facts show. Do not guess intent, performance, or security.
 - fact_ids lists the impact (i1, i2, …) and behavior (b1, b2, …) ids each item rests on.
 - If IMPACT FACTS is empty, set impact to null.
+
+Also fill review_summary from BEHAVIOR FACTS and IMPACT FACTS. A reviewer reads it in a minute to decide where to spend review time.
+- what_changed: two or three sentences: what the pull request does and the main behavioral change.
+- review_focus: the 3 to 7 most important things to verify, most important first, each phrased as something to check.
+- blast_radius: components, APIs, workflows, data stores, or services that could be affected even though they were not modified, from reached_from, callers_at_head, and IMPACT FACTS.
+- risks: suspicious areas, hidden coupling, backwards-compatibility concerns, failure modes, or missing tests that the facts show. Name a race condition, performance, or security risk only if a cited fact shows it.
+- You may name public entry points and changed public functions. Never name files or private helpers, and never write call syntax.
+- Every item cites fact_ids (b1… and i1…) it rests on. Only state what the cited facts show.
+- If BEHAVIOR FACTS and IMPACT FACTS are both empty, set review_summary to null.

@@ -25,6 +25,8 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
+from app.explanation.review_summary import build_summary_section
+from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND, build_review_diagram
 from app.explanation.impact import build_impact_facts, build_impact_section
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
@@ -389,15 +391,26 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         },
         "events": _events(session, run),
         "depths": list(DEPTHS),
-        "change_flow_diagram": (
-            story_explain := build_change_flow(
+        "change_flow_diagram": _with_review_diagram(
+            build_change_flow(
                 run.symbols,
                 run.relationships_,
                 run.evidences,
                 for_explain=True,
-            )
+            ),
+            run,
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
+        "review_summary": build_summary_section(
+            summary=_quick_field(explanations, "review_summary"),
+            behavior_facts=build_behavior_facts(
+                symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences
+            ),
+            claims=run.claims,
+            evidences=run.evidences,
+            prescreened=True,
+            reasons=_quick_screening(explanations, "summary_screening"),
+        ),
         "behavioral_changes": build_behavioral_section(
             narrative=_quick_field(explanations, "behavioral_changes"),
             reasons=_quick_screening(explanations),
@@ -455,6 +468,14 @@ def _patches_for_run(run: AnalysisRun) -> dict[str, str]:
         revision.head_sha,
         repository.installation_id,
     )
+
+
+def _with_review_diagram(story: dict, run: AnalysisRun) -> dict:
+    """The Explain diagram is the change-impact diagram; the older change graph is the fallback."""
+    review = build_review_diagram(
+        symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences
+    )
+    return {**story, "mermaid": review or story.get("mermaid", ""), "legend": REVIEW_DIAGRAM_LEGEND if review else ""}
 
 
 def _quick_field(explanations: dict, field: str) -> dict | None:

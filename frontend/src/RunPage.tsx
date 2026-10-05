@@ -9,6 +9,7 @@ import type {
   RunDetail,
   BehavioralChanges,
   ImpactSummary,
+  ReviewSummary,
 } from "./types";
 
 mermaid.initialize({
@@ -192,16 +193,10 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
+              {run.change_flow_diagram?.legend ? <p className="kicker diagram-legend">{run.change_flow_diagram.legend}</p> : null}
               <BehavioralChangesSection section={run.behavioral_changes} />
               <ImpactSection section={run.impact} />
-              <section className="narrative">
-                <h2>Summary</h2>
-                <ul className="bullets">
-                  {(run.explain_bullets ?? []).map((item, index) => (
-                    <li key={`${index}-${item}`}>{item}</li>
-                  ))}
-                </ul>
-              </section>
+              <ReviewSummarySection section={run.review_summary} bullets={run.explain_bullets ?? []} />
             </>
           ) : run.analysis_status === "succeeded" && tab === "deep" ? (
             <DetailsView run={run} />
@@ -497,6 +492,56 @@ const WRAP_FIRST_COLUMN = new Set([
   "Unchanged boundary",
   "Why a file outside the diff matters",
 ]);
+
+function ReviewSummarySection({ section, bullets }: { section?: ReviewSummary; bullets: string[] }) {
+  if (!section) {
+    return (
+      <section className="narrative">
+        <h2>Summary</h2>
+        <ul className="bullets">
+          {bullets.map((item, index) => (
+            <li key={`${index}-${item}`}>{item}</li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
+  const lists: [string, string[]][] = [
+    ["2. Review focus", section.review_focus],
+    ["3. Blast radius", section.blast_radius],
+    ["4. Potential risks", section.risks],
+  ];
+  return (
+    <section className="narrative review-summary">
+      <h2>Summary</h2>
+      <h4>1. What changed</h4>
+      <p>
+        <InlineCode text={section.what_changed || "No behavior change was found."} />
+      </p>
+      {lists.map(([title, items]) => (
+        <Fragment key={title}>
+          <h4>{title}</h4>
+          {items.length ? (
+            <ul className="bullets">
+              {items.map((item) => (
+                <li key={item}>
+                  <InlineCode text={item} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="kicker">None found in the analysis.</p>
+          )}
+        </Fragment>
+      ))}
+      <p className="kicker">
+        {section.source === "model"
+          ? "Written by the configured model from the behavior and impact facts; each item was checked against the facts it cites."
+          : section.note}
+      </p>
+    </section>
+  );
+}
 
 function ImpactSection({ section }: { section?: ImpactSummary }) {
   if (!section) return null;
