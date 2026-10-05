@@ -152,7 +152,9 @@ def execute_explain(
         # Keep the model's behavioral narrative only after it is checked against the packet's behavior facts.
         model_document = validation.document
         narrative = model_document.behavioral_changes if model_document is not None else None
-        document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts)
+        screening: list[str] = []
+        document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts, screening)
+        kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
     _store_explanation(
         session,
         run,
@@ -175,7 +177,11 @@ def execute_explain(
         message="Explanation succeeded",
         run_id=run.id,
         head_sha=run.revision.head_sha,
-        detail={"depth": depth},
+        detail=(
+            {"depth": depth, "behavior_changes_kept": kept, "behavior_screening": screening[:8]}
+            if depth == "quick"
+            else {"depth": depth}
+        ),
     )
     session.commit()
     if depth == "quick":

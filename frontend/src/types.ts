@@ -165,7 +165,7 @@ export type RunDetail = {
 };
 
 export type BehavioralChanges = {
-  source: "model" | "facts";
+  source: "model" | "none";
   fact_count: number;
   overview: string;
   changes: { title: string; before: string; after: string; impact: string }[];

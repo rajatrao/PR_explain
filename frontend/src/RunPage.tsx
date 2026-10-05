@@ -599,9 +599,8 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
       ) : null}
       {changes.length ? (
         <p className="kicker">
-          {section.source === "model"
-            ? `Narrated by the configured model from ${section.fact_count} before-and-after facts in the diff; every item was checked against the facts it cites.`
-            : `Summarized directly from ${section.fact_count} before-and-after facts in the diff.`}
+          Written by the configured model from {section.fact_count} before-and-after facts in the diff; each item was
+          checked against the facts it cites.
         </p>
       ) : null}
     </section>
