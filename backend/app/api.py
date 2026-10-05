@@ -25,7 +25,6 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
-from app.explanation.review_summary import build_summary_section
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND, build_review_diagram
 from app.explanation.impact import build_impact_facts, build_impact_section
 from app.explanation.details import build_details
@@ -401,16 +400,6 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             run,
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
-        "review_summary": build_summary_section(
-            summary=_quick_field(explanations, "review_summary"),
-            behavior_facts=build_behavior_facts(
-                symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences
-            ),
-            claims=run.claims,
-            evidences=run.evidences,
-            prescreened=True,
-            reasons=_quick_screening(explanations, "summary_screening"),
-        ),
         "behavioral_changes": build_behavioral_section(
             narrative=_quick_field(explanations, "behavioral_changes"),
             reasons=_quick_screening(explanations),

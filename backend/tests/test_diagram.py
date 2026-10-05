@@ -108,7 +108,7 @@ def test_two_calls_and_one_outside_caller_render_story_headings():
         evidence_by_id={},
         change_flow=explain_story["text"],
     )
-    assert "Widget changed." in body
+    assert "Widget changed." not in body  # no summary section in Explain
     assert "### Change flow" not in body
     assert "- Changed" not in body
     assert "Reached from outside this diff" not in body
@@ -148,7 +148,7 @@ def test_explain_comment_mermaid_names_changed_symbols_without_invented_edges():
     assert "```mermaid" in body
     assert "### Change flow" not in body
     assert "- Changed" not in body
-    assert "- Widget changed." in body
+    assert "- Widget changed." not in body
     fence = body.split("```mermaid", 1)[1].split("```", 1)[0]
     assert "Widget" in fence
     assert "-->|calls|" in fence

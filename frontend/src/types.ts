@@ -143,7 +143,6 @@ export type RunDetail = {
   behavior_flows?: BehaviorFlows;
   behavioral_changes?: BehavioralChanges;
   impact?: ImpactSummary;
-  review_summary?: ReviewSummary;
   changes?: FileChange[];
   details?: {
     sections: {
@@ -183,11 +182,3 @@ export type ImpactSummary = {
   watch: string[];
 };
 
-export type ReviewSummary = {
-  source: "model" | "facts";
-  what_changed: string;
-  review_focus: string[];
-  blast_radius: string[];
-  risks: string[];
-  note: string;
-};

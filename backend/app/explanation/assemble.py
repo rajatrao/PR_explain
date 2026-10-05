@@ -5,7 +5,7 @@ from pathlib import Path
 
 from app.explanation.schema import ExplanationDepth, ExplanationDocument, ExplanationPacket
 
-PROMPT_VERSION = "v7"
+PROMPT_VERSION = "v8"
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _BLOCKS = (
     "REPOSITORY FACTS",
