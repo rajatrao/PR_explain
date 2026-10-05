@@ -156,7 +156,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     impact_md = explain.split("### Impact", 1)[1].split("## ", 1)[0]
     assert "impact summary is not available" in impact_md
     assert explain.index("### Behavioral Changes") < explain.index("### Impact")
-    assert explain.index("### Impact") < explain.rindex("- createSession changed.")
+    assert "- createSession changed." not in explain  # Explain has no summary section
     assert "### What changed" in details
     assert "createSession" in body
     detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]

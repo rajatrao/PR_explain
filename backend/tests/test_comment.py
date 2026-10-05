@@ -107,11 +107,10 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert f"## Explain for `{NEW}`" in second
     assert f"## Details for `{NEW}`" in second
     assert f"## Review for `{NEW}`" in second
-    assert "- second" in explain
+    assert "- second" not in explain  # Explain no longer carries the summary bullets
     assert "```mermaid" in explain
     assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
     assert explain.index("### Behavioral Changes") < explain.index("### Impact")
-    assert explain.index("### Impact") < explain.index("- second")
     assert "### Change flow" not in explain
     assert "### Behavioral Changes" in explain
     assert "### Impact" in explain
@@ -275,7 +274,7 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert NEW in stored
     assert OLD not in stored
     assert "old prose" not in stored
-    assert "**2. Review focus**" in stored  # the reviewer summary replaced the bullet list
+    assert "### Summary" not in stored
     assert "What changed" in stored
     assert comments.comments[details_id] == RETIRED_DETAILS_NOTE
 
@@ -320,7 +319,7 @@ def test_leftover_details_comment_is_deleted_when_the_client_supports_it():
     assert publish_combined_comment(comments, "acme/app", 7, later, fallback_id=1) == 1
     assert list(comments.comments) == [1]
     assert comments._next == 3
-    assert "second bullet" in comments.comments[1]
+    assert "second bullet" not in comments.comments[1]  # Explain has no summary section
 
 
 def test_combined_comment_omits_trace_and_updates_in_place():
@@ -349,7 +348,7 @@ def test_combined_comment_omits_trace_and_updates_in_place():
     assert "Comment started" not in comments.comments[first_id]
     assert "### Trace" not in comments.comments[first_id]
     assert OLD not in comments.comments[first_id]
-    assert "second" in comments.comments[first_id]
+    assert "second" not in comments.comments[first_id]  # no summary section in Explain
     assert "## Explain for" in comments.comments[first_id]
     assert "## Details for" in comments.comments[first_id]
     assert "## Review for" in comments.comments[first_id]

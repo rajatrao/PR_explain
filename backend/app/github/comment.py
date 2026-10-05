@@ -6,7 +6,6 @@ from app.explanation.behavior_flow import build_behavior_flows, render_behavior_
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND
-from app.explanation.review_summary import build_summary_section, render_summary_markdown
 from app.explanation.impact import build_impact_facts, build_impact_section, render_impact_markdown
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
@@ -64,22 +63,18 @@ def render_pull_request_comment(
     footer = _footer(app_base_url, run_id)
     if failure or document is None:
         return _failure_body(marker, heading, failure, footer, "The Explain view is not available for this commit.")
-    story = _summary_block(document, claims=claims, symbols=symbols, relationships=relationships, evidence=evidence) or (
-        _bullet_block(bullets) or document.summary.strip()
-    )
+    del bullets  # The Explain view no longer carries a summary section.
     parts = [marker, heading, ""]
     _append_mermaid(parts, mermaid)
     _append_behavioral_changes(
         parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
     )
     _append_impact(parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
-    if story:
-        parts.append(story)
     parts.append(footer)
     body = "\n\n".join(part for part in parts if part is not None)
     if len(body) <= _LIMIT:
         return body
-    short = [marker, heading, story, ""]
+    short = [marker, heading, ""]
     _append_mermaid(short, mermaid)
     short.append(footer)
     trimmed = "\n\n".join(part for part in short if part)
@@ -182,9 +177,7 @@ def render_combined_comment(
                 ]
             )
         )
-    story = _summary_block(document, claims=claims, symbols=symbols, relationships=relationships, evidence=evidence) or (
-        _bullet_block(bullets) or document.summary.strip()
-    )
+    del bullets  # The Explain view no longer carries a summary section.
     explain_parts = [marker, explain_heading, ""]
     _append_mermaid(explain_parts, mermaid)
     flow_parts: list[str] = []
@@ -194,8 +187,6 @@ def render_combined_comment(
     _append_impact(
         flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
     )
-    if story:
-        flow_parts.append(story)
     built = build_details(
         symbols=symbols or [],
         relationships=relationships or [],
@@ -485,24 +476,6 @@ def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
     if not text:
         return
     parts.append("### Change flow\n\n" + _flow_markdown(text))
-
-
-def _summary_block(document, *, claims, symbols, relationships, evidence) -> str:
-    """What changed, Review focus, Blast radius, Potential risks (model summary, or the findings)."""
-    behavior_facts = build_behavior_facts(
-        symbols=symbols or [], relationships=relationships or [], claims=claims or [], evidences=evidence or []
-    )
-    if not behavior_facts and not claims:
-        return ""
-    section = build_summary_section(
-        summary=getattr(document, "review_summary", None),
-        behavior_facts=behavior_facts,
-        claims=claims or [],
-        evidences=evidence or [],
-        prescreened=True,
-        reasons=list(getattr(document, "summary_screening", None) or []),
-    )
-    return render_summary_markdown(section)
 
 
 def _append_flow_diagrams(parts: list[str], *, symbols, relationships, claims, evidence) -> None:

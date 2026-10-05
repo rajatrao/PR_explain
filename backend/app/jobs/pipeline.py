@@ -15,7 +15,6 @@ from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import screen_narrative
 from app.explanation.impact import build_impact_facts, screen_impact
 from app.explanation.review_diagram import build_review_diagram
-from app.explanation.review_summary import screen_summary
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
 from app.explanation.select import build_packet
@@ -168,11 +167,6 @@ def execute_explain(
         )
         document.impact_screening = [] if document.impact else impact_screening[:8]
         impact_kept = len(document.impact.areas) if document.impact else 0
-        summary_screening: list[str] = []
-        document.review_summary = screen_summary(
-            _raw_field(result.content, "review_summary"), packet.behavior_facts, packet.impact_facts, summary_screening
-        )
-        document.summary_screening = summary_screening[:8]
     _store_explanation(
         session,
         run,
@@ -202,7 +196,6 @@ def execute_explain(
                 "behavior_screening": screening[:8],
                 "impact_areas_kept": impact_kept,
                 "impact_screening": impact_screening[:8],
-                "summary_screening": summary_screening[:8],
             }
             if depth == "quick"
             else {"depth": depth}
