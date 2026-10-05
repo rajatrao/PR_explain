@@ -8,6 +8,7 @@ import type {
   FileChange,
   RunDetail,
   BehavioralChanges,
+  ImpactSummary,
 } from "./types";
 
 mermaid.initialize({
@@ -192,8 +193,7 @@ export function RunPage({ id }: { id: string }) {
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
               <BehavioralChangesSection section={run.behavioral_changes} />
-              <BehaviorFlowsSection flows={run.behavior_flows} />
-              <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
+              <ImpactSection section={run.impact} />
               <section className="narrative">
                 <h2>Summary</h2>
                 <ul className="bullets">
@@ -498,17 +498,39 @@ const WRAP_FIRST_COLUMN = new Set([
   "Why a file outside the diff matters",
 ]);
 
-function LabeledExplainSection({ title, rows }: { title: string; rows: { label: string; value: string }[] }) {
-  if (rows.length === 0) return null;
+function ImpactSection({ section }: { section?: ImpactSummary }) {
+  if (!section) return null;
+  const levels = section.levels ?? [];
   return (
-    <section className="narrative detail-group wrap-first">
-      <h3>{title}</h3>
-      {rows.map((row, index) => (
-        <div className="detail-row" key={`${title}-${row.label}-${index}`}>
-          <span className="detail-label">{row.label}</span>
-          <span>{row.value}</span>
+    <section className="narrative impact-section">
+      <h3>Impact</h3>
+      {levels.length === 0 ? <p>No impact beyond the changed code was found in the stored facts.</p> : null}
+      {levels.map((level) => (
+        <div className={`impact-level impact-${level.level}`} key={level.level}>
+          <span className="impact-label">{level.label}</span>
+          <div>
+            <p className="impact-summary">
+              <InlineCode text={level.summary} />
+            </p>
+            {level.details?.length ? (
+              <ul>
+                {level.details.map((item) => (
+                  <li key={item}>
+                    <InlineCode text={item} />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         </div>
       ))}
+      {levels.length ? (
+        <p className="kicker">
+          {section.source === "model"
+            ? "Written by the configured model from the impact and behavior facts; each level was checked against the facts it cites."
+            : section.note}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -613,14 +635,18 @@ function DetailsView({ run }: { run: RunDetail }) {
   );
   const changes = run.changes ?? [];
   const hasWhatChanged = sections.some((section) => section.title === "What changed");
+  const hasKeyChanges = sections.some((section) => section.title === "Key Changes");
+  const flows = <BehaviorFlowsSection flows={run.behavior_flows} />;
   return (
     <section className="narrative">
+      {hasKeyChanges ? null : flows}
       {sections.length === 0 && changes.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
         <>
           {sections.map((section) => (
             <Fragment key={section.title}>
+              {section.title === "Key Changes" ? flows : null}
               <DetailGroup
                 title={section.title}
                 rows={section.rows}

@@ -244,12 +244,13 @@ def test_new_sha_replaces_comment_body(db):
     explain_body, rest = latest.split("## Details for", 1)
     details_body, review_body = rest.split("## Review for", 1)
     assert "```mermaid" in explain_body
-    assert "```mermaid" not in details_body
+    # The only diagrams in Details are the old and new flow diagrams, above Key Changes.
+    assert "```mermaid" not in details_body.split("### Old flow vs New flow", 1)[0]
     assert "```mermaid" not in review_body
-    assert "### System Impact" not in details_body
+    assert "### Impact" not in details_body
     assert "| Area | Reason | Evidence file |" not in details_body
-    assert "### System Impact" in explain_body
-    assert explain_body.index("### Behavioral Changes") < explain_body.index("### System Impact")
+    assert "### Impact" in explain_body
+    assert explain_body.index("### Behavioral Changes") < explain_body.index("### Impact")
     assert "### Reviewer Attention" not in details_body
     assert "### Reviewer Attention" in review_body
     assert "### Review questions" in review_body
@@ -555,6 +556,18 @@ class _NarratingProvider:
             ],
             "watch": [],
         }
+        system_ids = [fact.id for fact in request.packet.impact_facts if fact.level == "system"]
+        document["impact"] = {
+            "levels": [
+                {
+                    "level": "system",
+                    "summary": "Every sign-in path now creates sessions with an explicit TTL.",
+                    "details": ["All three sign-in entry points pass a TTL."],
+                    "fact_ids": system_ids,
+                },
+                {"level": "data", "summary": "Sessions move to the `sessions_v2` table.", "fact_ids": system_ids},
+            ]
+        }
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 
 
@@ -578,6 +591,14 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     posted = comments.bodies[-1]
     assert "**Session token format**" in posted
     assert "redisClient" not in posted
+    impact = body["impact"]
+    assert impact["source"] == "model"
+    assert [level["level"] for level in impact["levels"]] == ["system"]
+    assert "**System** — Every sign-in path now creates sessions with an explicit TTL." in posted
+    assert "sessions_v2" not in posted
+    details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
+    assert "### Old flow vs New flow" in details
+    assert "### Old flow vs New flow" not in posted.split("## Details for", 1)[0]
 
 
 def test_missing_narrative_reason_is_shown(db):

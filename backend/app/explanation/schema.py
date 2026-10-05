@@ -135,6 +135,17 @@ class BehaviorFunctionFact(BaseModel):
     changes: list[BehaviorChangeFact] = Field(default_factory=list)
 
 
+class ImpactFact(BaseModel):
+    """One grounded impact fact at a level: system, api, data, config, dependency, ui, or testing."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    level: str
+    text: str
+    behavior_ids: list[str] = Field(default_factory=list)
+
+
 class ExplanationPacket(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -149,6 +160,7 @@ class ExplanationPacket(BaseModel):
     unknowns: list[UnknownRef] = Field(default_factory=list)
     context_notes: list[ContextNote] = Field(default_factory=list)
     behavior_facts: list[BehaviorFunctionFact] = Field(default_factory=list)
+    impact_facts: list[ImpactFact] = Field(default_factory=list)
 
 
 class Statement(BaseModel):
@@ -187,6 +199,23 @@ class BehavioralNarrative(BaseModel):
     watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
+class ImpactLevelNote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    level: str
+    summary: str
+    details: list[str] = Field(default_factory=list)
+    fact_ids: list[str] = Field(default_factory=list)
+
+
+class ImpactNarrative(BaseModel):
+    """Impact of the pull request at each level, written from impact and behavior facts only."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    levels: list[ImpactLevelNote] = Field(default_factory=list)
+
+
 class ExplanationDocument(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -201,6 +230,8 @@ class ExplanationDocument(BaseModel):
     behavioral_changes: BehavioralNarrative | None = None
     # Why the narrative was not kept. Set by the pipeline; hidden from the model's output schema.
     behavior_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    impact: ImpactNarrative | None = None
+    impact_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
         return [

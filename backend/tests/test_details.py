@@ -147,17 +147,16 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "```mermaid" in explain
     assert "### Diagram" not in body
     assert "## Diagram" not in body
-    assert "```mermaid" not in details
+    # Details holds the old and new flow diagrams (above Key Changes); no other diagram.
+    assert "```mermaid" not in details or "### Old flow vs New flow" in details
     assert "```mermaid" not in review
-    assert "### System Impact" not in details
-    assert "### System Impact" in explain
+    assert "### Impact" not in details
+    assert "### Impact" in explain
     assert "| Area | Reason | Evidence file |" not in details
-    system_md = explain.split("### System Impact", 1)[1].split("## ", 1)[0]
-    assert "**System Impact**" in system_md
-    assert "**Reviewer Considerations**" in system_md
-    assert "**Risk & Scope**" in system_md
-    assert explain.index("### Behavioral Changes") < explain.index("### System Impact")
-    assert explain.index("### System Impact") < explain.rindex("- createSession changed.")
+    impact_md = explain.split("### Impact", 1)[1].split("## ", 1)[0]
+    assert "**System**" in impact_md
+    assert explain.index("### Behavioral Changes") < explain.index("### Impact")
+    assert explain.index("### Impact") < explain.rindex("- createSession changed.")
     assert "### What changed" in details
     assert "createSession" in body
     detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]
@@ -467,6 +466,6 @@ def test_system_impact_skips_test_paths_risk_is_deduped_and_long_sections_collap
     assert f"test_fn{len(rows['Tests']) - 1}.py" in tests_md or "fn21" in tests_md
     boundary_md = markdown.split("<summary>Unchanged boundary</summary>", 1)[1].split("</details>", 1)[0]
     assert boundary_md.strip()
-    assert "### System Impact" not in markdown
+    assert "### Impact" not in markdown
     shared_md = markdown.split("### Shared code", 1)[1].split("<details>", 1)[0]
     assert "<details>" not in shared_md

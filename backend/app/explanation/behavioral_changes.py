@@ -58,6 +58,8 @@ _SNAKE = re.compile(r"(?<![\w.])_?[a-z][a-z0-9]*_[a-z0-9_]+\b")
 _CAMEL = re.compile(r"\b[a-z]+[A-Z][A-Za-z0-9]*\b|\b[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*\b")
 _CALL_LIKE = re.compile(r"\b[A-Za-z_][\w.]*\(")
 _PLAIN_WORD = re.compile(r"^[a-z]+$")
+# A source file path such as backend/app/api.py or src/session.ts. Routes like /api/runs are not files.
+_FILE_PATH = re.compile(r"(?<![\w/])(?:[\w.-]+/)+[\w.-]+\.(?:py|ts|tsx|js|jsx|go|java|rb|rs|cs|php|kt|swift|vue|css|scss|sql|toml|ya?ml|json|md)\b")
 
 
 # --- section -----------------------------------------------------------------------
@@ -156,45 +158,10 @@ def screen_narrative(
             log.append("behavioral_changes did not match the schema")
             return None
 
-    by_change = {change.id: (fact, change) for fact in facts for change in fact.changes}
-    callables = _callable_names(facts)
-    entry_points = {name for fact in facts for name in fact.reached_from}
-
-    def scope(ids: list[str]) -> str | None:
-        valid = [item for item in ids if item in by_change]
-        if not valid:
-            return None
-        chunks: list[str] = []
-        for change_id in valid:
-            fact, change = by_change[change_id]
-            chunks.extend(fact.reached_from + fact.notes)
-            chunks.extend(text for text in (change.before, change.after, change.before_when, change.after_when) if text)
-        return "\n".join(chunks)
-
-    def problem(text: str, allowed: str, *, may_name_entries: bool) -> str | None:
-        if not text.strip():
-            return "empty text"
-        if _DEFECT.search(text):
-            return "asserted a defect"
-        if _EDIT_LIST.search(text):
-            return "listed code edits"
-        if _CALL_LIKE.search(text):
-            return "quoted a call"
-        permitted = entry_points if may_name_entries else set()
-        for name in callables - permitted:
-            # A plain word such as "charge" or "record" is also English; it counts as a name only in code form.
-            if _PLAIN_WORD.match(name):
-                continue
-            if re.search(rf"(?<![\w.]){re.escape(name)}(?![\w])", text):
-                return f"named the function {name}"
-        for token in _identifiers(text):
-            if token in _WORDS or token in permitted:
-                continue
-            if token in callables:
-                return f"named the function {token}"
-            if token not in allowed:
-                return f"used {token}, which is not in the cited facts"
-        return None
+    grounding = Grounding(facts)
+    by_change = grounding.by_change
+    scope = grounding.scope
+    problem = grounding.problem
 
     kept: list[BehaviorChangeNote] = []
     for change in narrative.changes:
@@ -212,7 +179,7 @@ def screen_narrative(
         if issue:
             log.append(f"dropped '{change.title[:40]}': {issue}")
             continue
-        kept.append(change.model_copy(update={"fact_ids": [item for item in change.fact_ids if item in by_change]}))
+        kept.append(change.model_copy(update={"fact_ids": grounding.known(change.fact_ids)}))
         if len(kept) >= CHANGE_CAP:
             break
     if not kept:
@@ -233,6 +200,69 @@ def screen_narrative(
     if overview and problem(overview, everything, may_name_entries=True):
         overview = ""
     return BehavioralNarrative(overview=overview, changes=kept, watch=watch)
+
+
+class Grounding:
+    """What a narrative item may say, given the behavior facts (b…) and impact facts (i…) it cites."""
+
+    def __init__(self, facts: list[BehaviorFunctionFact], impact_facts=None) -> None:
+        self.by_change = {change.id: (fact, change) for fact in facts for change in fact.changes}
+        self.by_impact = {item.id: item for item in impact_facts or []}
+        self.callables = _callable_names(facts)
+        self.entry_points = {name for fact in facts for name in fact.reached_from}
+
+    def known(self, ids: list[str]) -> list[str]:
+        return [item for item in ids if item in self.by_change or item in self.by_impact]
+
+    def scope(self, ids: list[str]) -> str | None:
+        valid = self.known(ids)
+        if not valid:
+            return None
+        chunks: list[str] = []
+        for item_id in valid:
+            if item_id in self.by_impact:
+                impact = self.by_impact[item_id]
+                chunks.append(impact.text)
+                for behavior_id in impact.behavior_ids:
+                    chunks.extend(self._behavior_chunks(behavior_id))
+            else:
+                chunks.extend(self._behavior_chunks(item_id))
+        return "\n".join(chunks)
+
+    def _behavior_chunks(self, change_id: str) -> list[str]:
+        if change_id not in self.by_change:
+            return []
+        fact, change = self.by_change[change_id]
+        chunks = list(fact.reached_from + fact.notes)
+        chunks.extend(text for text in (change.before, change.after, change.before_when, change.after_when) if text)
+        return chunks
+
+    def problem(self, text: str, allowed: str, *, may_name_entries: bool) -> str | None:
+        if not text.strip():
+            return "empty text"
+        if _DEFECT.search(text):
+            return "asserted a defect"
+        if _EDIT_LIST.search(text):
+            return "listed code edits"
+        if _CALL_LIKE.search(text):
+            return "quoted a call"
+        if _FILE_PATH.search(text):
+            return "named a file"
+        permitted = self.entry_points if may_name_entries else set()
+        for name in self.callables - permitted:
+            # A plain word such as "charge" or "record" is also English; it counts as a name only in code form.
+            if _PLAIN_WORD.match(name):
+                continue
+            if re.search(rf"(?<![\w.]){re.escape(name)}(?![\w])", text):
+                return f"named the function {name}"
+        for token in _identifiers(text):
+            if token in _WORDS or token in permitted:
+                continue
+            if token in self.callables:
+                return f"named the function {token}"
+            if token not in allowed:
+                return f"used {token}, which is not in the cited facts"
+        return None
 
 
 def _callable_names(facts: list[BehaviorFunctionFact]) -> set[str]:

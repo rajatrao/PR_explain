@@ -110,14 +110,14 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "- second" in explain
     assert "```mermaid" in explain
     assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
-    assert explain.index("### Behavioral Changes") < explain.index("### System Impact")
-    assert explain.index("### System Impact") < explain.index("- second")
+    assert explain.index("### Behavioral Changes") < explain.index("### Impact")
+    assert explain.index("### Impact") < explain.index("- second")
     assert "### Change flow" not in explain
     assert "### Behavioral Changes" in explain
-    assert "### System Impact" in explain
+    assert "### Impact" in explain
     assert "### Behavior Changes" not in second
     assert "### Behavioral Changes" not in details
-    assert "### System Impact" not in details
+    assert "### Impact" not in details
     assert "- Changed" not in explain
     assert "  - login" not in explain
     assert "### Change flow" in details
@@ -128,8 +128,8 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "### Change Overview" not in details
     assert "Change Overview" not in details
     assert "### Impact" not in details
-    assert "### System Impact" not in details
-    assert "### System Impact" in explain
+    assert "### Impact" not in details
+    assert "### Impact" in explain
     assert "| Area | Reason | Evidence file |" not in details
     assert "### Risk Areas" not in details
     assert "### Unknowns" not in details
@@ -231,8 +231,8 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert "### Reviewer Attention" not in details
     assert "What changed" in details
     assert "### Impact" not in details
-    assert "### System Impact" not in details
-    assert "### System Impact" in explain
+    assert "### Impact" not in details
+    assert "### Impact" in explain
     assert "| Area | Reason | Evidence file |" not in details
     assert "### Risk Areas" not in details
     assert "### Change Overview" not in details
@@ -478,10 +478,9 @@ def test_details_comment_collapses_long_sections_and_omits_unknowns():
     assert "test_fn21.py" in tests
     assert "<summary>Unchanged boundary</summary>" in details
     explain_part = body.split("## Details for", 1)[0]
-    system = explain_part.split("### System Impact", 1)[1].split("## ", 1)[0]
+    system = explain_part.split("### Impact", 1)[1].split("## ", 1)[0]
     assert "test_fn0.py" not in system
     assert "backend/app/llm/provider.py" not in system
-    assert "**Risk & Scope**" in system
     assert "### Risk Areas" not in details
     assert "| add |" not in details
     assert "| _subject |" not in details

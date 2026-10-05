@@ -141,11 +141,7 @@ export type RunDetail = {
   explain_bullets: string[];
   behavior_flows?: BehaviorFlows;
   behavioral_changes?: BehavioralChanges;
-  system_impact?: {
-    label: string;
-    value: string;
-    href?: string | null;
-  }[];
+  impact?: ImpactSummary;
   changes?: FileChange[];
   details?: {
     sections: {
@@ -176,4 +172,10 @@ export type BehaviorFlows = {
   before: string;
   after: string;
   legend: string;
+};
+
+export type ImpactSummary = {
+  source: "model" | "facts";
+  levels: { level: string; label: string; summary: string; details: string[] }[];
+  note: string;
 };
