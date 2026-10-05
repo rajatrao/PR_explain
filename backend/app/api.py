@@ -25,7 +25,7 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
-from app.explanation.impact import build_impact
+from app.explanation.impact import build_impact_facts, build_impact_section
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.select import build_packet
@@ -411,7 +411,13 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             ),
             prescreened=True,
         ),
-        "impact": build_impact(claims=run.claims, evidences=run.evidences, behavior_facts=behavior_facts),
+        "impact": build_impact_section(
+            narrative=_quick_field(explanations, "impact"),
+            behavior_facts=behavior_facts,
+            impact_facts=build_impact_facts(claims=run.claims, evidences=run.evidences, behavior_facts=behavior_facts),
+            prescreened=True,
+            reasons=_quick_screening(explanations, "impact_screening"),
+        ),
         "behavior_flows": build_behavior_flows(
             build_behavior_comparison(
                 symbols=run.symbols,
@@ -461,8 +467,8 @@ def _quick_field(explanations: dict, field: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def _quick_screening(explanations: dict) -> list[str]:
-    """Why the behavioral narrative is missing: the stored screening reasons, or the Quick status."""
+def _quick_screening(explanations: dict, field: str = "behavior_screening") -> list[str]:
+    """Why a narrative (behavioral changes or impact) is missing: stored screening reasons, or the Quick status."""
     quick = explanations.get("quick") or {}
     status = quick.get("status")
     if status != "succeeded":
@@ -472,9 +478,9 @@ def _quick_screening(explanations: dict) -> list[str]:
             return ["the explanation step failed" + (f" ({quick.get('error')})" if quick.get("error") else "")]
         return ["the explanation step has not run for this commit"]
     document = quick.get("document") if isinstance(quick.get("document"), dict) else {}
-    if "behavior_screening" not in document and "behavioral_changes" not in document:
-        return ["this commit was explained before behavioral summaries existed; run the explanation again"]
-    return [str(item) for item in document.get("behavior_screening") or []]
+    if field not in document:
+        return ["this commit was explained before this summary existed; run the explanation again"]
+    return [str(item) for item in document.get(field) or []]
 
 
 def _document_texts(explanations: dict, field: str) -> list[str]:

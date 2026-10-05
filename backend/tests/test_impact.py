@@ -1,8 +1,14 @@
 from app.analyzer.surface import find_surfaces
 from app.analyzer.types import Claim, Evidence, FileChange
 from app.analyzer.review_signals import _checks_result, _inside_try
-from app.explanation.impact import build_impact, render_impact_markdown
-from app.explanation.schema import BehaviorChangeFact, BehaviorFunctionFact
+from app.explanation.impact import (
+    build_impact,
+    build_impact_facts,
+    build_impact_section,
+    render_impact_markdown,
+    screen_impact,
+)
+from app.explanation.schema import BehaviorChangeFact, BehaviorFunctionFact, ImpactNarrative
 
 
 def _surface_patch():
@@ -135,13 +141,6 @@ def test_impact_ranks_findings_by_rule_and_lists_dependents():
     assert section["partial"] == "8 of 20 calls in the changed files could not be resolved to one function, so other consumers may exist."
     assert section["scope"].startswith("Several workflows. 1 production file changed; the changed behavior is reached from 4 entry points")
 
-    markdown = render_impact_markdown(section)
-    assert markdown.startswith("### Impact\n\n**Scope:** Several workflows.")
-    assert "1. **High: A migration drops the column runs.old.** Data stored in it is lost when the migration runs." in markdown
-    assert "- login — reaches createSession via `createSession(userId, 3600)`" in markdown
-    assert "- [ ] Set `API_KEY` in every environment before deploying." in markdown
-    for noise in ("production files have no", "truncated", "test count"):
-        assert noise not in markdown
 
 
 def test_handled_failure_is_medium_and_complete_coverage_says_not_affected():
@@ -184,3 +183,66 @@ def test_try_and_result_checks_are_read_from_caller_lines():
     assert _inside_try(ts, 3, 1, "src/login.ts") is True
     assert _inside_try(ts, 6, 1, "src/login.ts") is False
     assert _checks_result(ts, 3) == "if (!s"
+
+
+def _summary_facts():
+    claims, evidences = _claims_and_evidence()
+    _context(claims, evidences, "checkout", "charge", handled=False)
+    return build_impact_facts(claims=claims, evidences=evidences, behavior_facts=[_charge(), _session()])
+
+
+def test_impact_facts_carry_rule_severity_and_link_behavior():
+    facts = _summary_facts()
+    attention = [f for f in facts if f.kind == "attention"]
+    assert [f.severity for f in attention] == ["high", "high", "medium"]
+    failure = next(f for f in attention if f.text.startswith("New failure can reach post_checkout"))
+    assert failure.behavior_ids == ["b1", "b2"]
+    assert any(f.kind == "dependents" and f.text.startswith("login reaches createSession") for f in facts)
+
+
+def test_model_impact_summary_is_screened_like_behavioral_changes():
+    facts = _summary_facts()
+    by_text = {f.text.split(".")[0]: f.id for f in facts}
+    failure_id = by_text["New failure can reach post_checkout"]
+    contract_id = by_text["Shared function createSession changes its contract"]
+    drop_id = by_text["A migration drops the column runs"]
+    narrative = ImpactNarrative.model_validate(
+        {
+            "overview": "Checkout and sign-in both behave differently, and one migration removes stored data.",
+            "areas": [
+                {"title": "Checkout failures", "severity": "high", "summary": "Negative totals now fail with InvalidOrder, and nothing on the checkout path catches it.", "who_notices": "Anyone checking out.", "fact_ids": [failure_id, "b1"]},
+                {"title": "Sign-in sessions", "severity": "high", "summary": "Every sign-in path must now supply a session lifetime; all current callers already do.", "who_notices": "Sign-in and token refresh.", "fact_ids": [contract_id]},
+                {"title": "Stored runs", "severity": "high", "summary": "The upgrade deletes the old column and its values.", "fact_ids": [drop_id]},
+                {"title": "Session creation", "severity": "low", "summary": "`createSession` now takes a TTL.", "fact_ids": [contract_id]},
+                {"title": "Login", "severity": "low", "summary": "Users of login see longer sessions.", "who_notices": "`login` callers", "fact_ids": [contract_id]},
+                {"title": "Caching", "severity": "low", "summary": "Sessions are cached in `REDIS_URL`.", "fact_ids": [contract_id]},
+            ],
+            "watch": [{"text": "Is the longer refresh lifetime intended?", "fact_ids": [contract_id]}],
+        }
+    )
+    reasons: list[str] = []
+    kept = screen_impact(narrative, [_charge(), _session()], facts, reasons)
+    # Severity is capped by the cited finding: the contract change is medium.
+    assert [(a.title, a.severity) for a in kept.areas] == [
+        ("Checkout failures", "high"),
+        ("Stored runs", "high"),
+        ("Sign-in sessions", "medium"),
+    ]
+    assert any("named the function createSession" in r for r in reasons)
+    assert any("named the function login" in r for r in reasons)
+    assert any("REDIS_URL" in r for r in reasons)
+    section = build_impact_section(narrative=kept, behavior_facts=[_charge(), _session()], impact_facts=facts, prescreened=True)
+    markdown = render_impact_markdown(section)
+    assert markdown.startswith("### Impact\n\nCheckout and sign-in both behave differently")
+    assert "**Checkout failures** (high)" in markdown
+    assert "**Worth checking**" in markdown
+    for name in ("createSession", "post_checkout", "charge(", "login"):
+        assert name not in markdown
+
+
+def test_missing_impact_summary_shows_a_notice_with_the_reason():
+    facts = _summary_facts()
+    section = build_impact_section(narrative=None, behavior_facts=[], impact_facts=facts, reasons=["the model returned no impact"])
+    assert section["source"] == "none"
+    assert section["overview"].endswith("Reason: the model returned no impact.")
+    assert render_impact_markdown(section).startswith("### Impact\n\nAn impact summary is not available")

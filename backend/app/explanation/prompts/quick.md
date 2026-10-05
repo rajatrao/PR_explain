@@ -11,3 +11,12 @@ Also fill behavioral_changes from BEHAVIOR FACTS. It is read by reviewers of thi
 - overview: at most two sentences on the overall behavioral shift, in the same plain terms. watch: up to three questions a reviewer should check, each citing fact_ids.
 - If BEHAVIOR FACTS is empty, set behavioral_changes to null.
 
+
+Also fill impact from IMPACT FACTS and BEHAVIOR FACTS, the same way as behavioral_changes: written for reviewers, about observable effects, never implementation details. IMPACT FACTS are findings derived by rule: the scope of the change, findings that need attention (each with a severity), the workflows that depend on the change, checks to make, and how complete the call analysis was.
+- overview: one or two sentences on how far the change reaches and what matters most.
+- areas: up to five impact areas, most important first. title names the affected capability or concern in plain words. severity is high, medium, or low, and never above the most severe IMPACT FACT the area cites. summary says what changes for users, clients, operators, or stored data, and why it matters. who_notices names the affected workflows in plain words.
+- watch: up to three questions a reviewer should check, each citing fact_ids.
+- Never name functions, methods, classes, variables, entry points, or files, and never write call syntax or code. Describe workflows by what they do (for example "sign-in" or "token refresh"), not by their function names.
+- Only state what the cited facts show. Do not guess intent, performance, or security.
+- fact_ids lists the impact (i1, i2, …) and behavior (b1, b2, …) ids each item rests on.
+- If IMPACT FACTS is empty, set impact to null.

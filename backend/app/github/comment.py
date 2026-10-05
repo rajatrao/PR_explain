@@ -5,7 +5,7 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
-from app.explanation.impact import build_impact, render_impact_markdown
+from app.explanation.impact import build_impact_facts, build_impact_section, render_impact_markdown
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
@@ -507,14 +507,18 @@ def _append_behavioral_changes(parts: list[str], *, document, symbols, relations
 
 
 def _append_impact(parts: list[str], *, document, symbols, relationships, claims, evidence) -> None:
-    del document
     behavior_facts = build_behavior_facts(
         symbols=symbols or [],
         relationships=relationships or [],
         claims=claims or [],
         evidences=evidence or [],
     )
-    section = build_impact(claims=claims or [], evidences=evidence or [], behavior_facts=behavior_facts)
+    impact_facts = build_impact_facts(claims=claims or [], evidences=evidence or [], behavior_facts=behavior_facts)
+    narrative = getattr(document, "impact", None) if document is not None else None
+    reasons = list(getattr(document, "impact_screening", None) or []) if document is not None else []
+    section = build_impact_section(
+        narrative=narrative, behavior_facts=behavior_facts, impact_facts=impact_facts, prescreened=True, reasons=reasons
+    )
     parts.append(render_impact_markdown(section))
 
 

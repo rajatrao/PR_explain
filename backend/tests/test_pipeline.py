@@ -556,6 +556,15 @@ class _NarratingProvider:
             ],
             "watch": [],
         }
+        contract = [fact.id for fact in request.packet.impact_facts if fact.kind == "attention"]
+        document["impact"] = {
+            "overview": "Every sign-in path now creates sessions with an explicit lifetime.",
+            "areas": [
+                {"title": "Sign-in sessions", "severity": "high", "summary": "Sessions now carry their lifetime; every current sign-in path supplies one.", "who_notices": "Sign-in and token refresh.", "fact_ids": contract},
+                {"title": "Session API", "severity": "low", "summary": "`createSession` needs a TTL.", "fact_ids": contract},
+            ],
+            "watch": [],
+        }
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 
 
@@ -580,10 +589,11 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     assert "**Session token format**" in posted
     assert "redisClient" not in posted
     impact = body["impact"]
-    assert impact["scope"].startswith("Several workflows.")
-    assert [item["title"] for item in impact["attention"]] == ["Shared function createSession changes its contract"]
-    assert [item["entry"] for item in impact["dependents"]] == ["googleCallback", "login", "refreshToken"]
-    assert "**Needs attention**" in posted and "**Who depends on this**" in posted
+    assert impact["source"] == "model"
+    # Capped at the cited finding's severity (medium); the item naming a function is dropped.
+    assert [(a["title"], a["severity"]) for a in impact["areas"]] == [("Sign-in sessions", "medium")]
+    assert "**Sign-in sessions** (medium)" in posted
+    assert "`createSession` needs a TTL" not in posted
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
     assert "### Old flow vs New flow" in details
     assert "### Old flow vs New flow" not in posted.split("## Details for", 1)[0]

@@ -500,65 +500,35 @@ const WRAP_FIRST_COLUMN = new Set([
 
 function ImpactSection({ section }: { section?: ImpactSummary }) {
   if (!section) return null;
-  const attention = section.attention ?? [];
-  const dependents = section.dependents ?? [];
-  const verify = section.verify ?? [];
-  const note = section.not_affected || section.partial;
+  const areas = section.areas ?? [];
   return (
     <section className="narrative impact-section">
       <h3>Impact</h3>
-      <p className="impact-scope">
-        <span className="detail-label">Scope</span> <InlineCode text={section.scope || "No behavior change was found."} />
-      </p>
-      {attention.length ? (
-        <div className="impact-risks">
-          <h4>Needs attention</h4>
-          <ol>
-            {attention.map((item) => (
-              <li key={item.title}>
-                <span className={`severity severity-${item.severity}`}>{item.severity}</span>
-                <div>
-                  <strong>
-                    <InlineCode text={item.title} />
-                  </strong>
-                  <p className="impact-why">
-                    <InlineCode text={item.why} />
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
+      {section.overview ? (
+        <p className="behavior-summary">
+          <InlineCode text={section.overview} />
+        </p>
       ) : null}
-      {dependents.length ? (
-        <div className="impact-dependents">
-          <h4>Who depends on this</h4>
-          <ul>
-            {dependents.map((item) => (
-              <li key={item.entry}>
-                <code>{item.entry}</code> reaches {item.reaches.join(", ")}
-                {item.calls.length ? (
-                  <span className="kicker">
-                    {" "}
-                    via{" "}
-                    {item.calls.map((call, index) => (
-                      <Fragment key={call}>
-                        {index ? "; " : ""}
-                        <code>{call}</code>
-                      </Fragment>
-                    ))}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+      {areas.map((area) => (
+        <div className="behavior-card" key={area.title}>
+          <h4 className="behavior-title">
+            <span className={`severity severity-${area.severity}`}>{area.severity}</span> <InlineCode text={area.title} />
+          </h4>
+          <p className="impact-why">
+            <InlineCode text={area.summary} />
+          </p>
+          {area.who_notices ? (
+            <p className="behavior-impact">
+              <span className="detail-label">Who notices</span> <InlineCode text={area.who_notices} />
+            </p>
+          ) : null}
         </div>
-      ) : null}
-      {verify.length ? (
-        <div className="impact-verify">
-          <h4>Verify</h4>
+      ))}
+      {section.watch?.length ? (
+        <div className="flow-focus">
+          <h4>Worth checking</h4>
           <ul>
-            {verify.map((item) => (
+            {section.watch.map((item) => (
               <li key={item}>
                 <InlineCode text={item} />
               </li>
@@ -566,7 +536,12 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
           </ul>
         </div>
       ) : null}
-      {note ? <p className="kicker">{note}</p> : null}
+      {areas.length ? (
+        <p className="kicker">
+          Written by the configured model from rule-derived impact findings; each item was checked against the facts it
+          cites.
+        </p>
+      ) : null}
     </section>
   );
 }
