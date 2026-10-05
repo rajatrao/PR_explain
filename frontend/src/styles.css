@@ -399,3 +399,35 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
   .detail-group.wrap-first .detail-label { max-width: 100%; }
   h1 { font-size: 32px; }
 }
+
+/* Old flow vs New flow, Old vs New Behavior */
+.behavior-flows h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+.flow-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.flow-side { min-width: 0; border-top: 3px solid #d9d0c3; padding-top: 8px; }
+.flow-before { border-top-color: #c0392b; }
+.flow-after { border-top-color: #1e8449; }
+.flow-side .diagram { margin-top: 0; }
+.behavior-summary { margin: 0 0 12px; }
+.behavior-card { border: 1px solid #d9d0c3; border-radius: 6px; padding: 12px 14px; margin: 0 0 14px; background: #fbf9f4; }
+.behavior-card.removed { border-color: #e6b0aa; }
+.behavior-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.behavior-name { font-size: 16px; font-weight: 600; }
+.behavior-location { font-size: 13px; color: #6b6255; }
+.badge { display: inline-block; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; border: 1px solid #b9ad9b; border-radius: 10px; padding: 0 7px; margin-left: 6px; color: #5a5146; }
+.badge-removed { border-color: #c0392b; color: #7b241c; }
+.badge-outside { border-color: #b9770e; color: #7e5109; }
+.behavior-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
+.behavior-table th { text-align: left; font-weight: 600; border-bottom: 1px solid #d9d0c3; padding: 4px 6px; }
+.behavior-table td { vertical-align: top; border-bottom: 1px solid #ebe4d8; padding: 6px; overflow-wrap: anywhere; }
+.behavior-table th:first-child, .behavior-aspect { width: 92px; }
+.behavior-code { display: block; white-space: pre-wrap; font-size: 12.5px; padding: 4px 6px; border-radius: 4px; }
+.behavior-before .behavior-code { background: #fdecea; color: #7b241c; }
+.behavior-after .behavior-code { background: #e9f7ef; color: #145a32; }
+.behavior-line { display: block; font-size: 11px; color: #6b6255; margin-top: 2px; }
+.behavior-none { color: #9a8f80; }
+.behavior-reach { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 10px; font-size: 14px; }
+.behavior-reach ul { margin: 0; padding-left: 18px; }
+@media (max-width: 800px) {
+  .flow-pair, .behavior-reach { grid-template-columns: 1fr; }
+  .behavior-table { table-layout: auto; }
+}

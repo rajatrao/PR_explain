@@ -139,6 +139,8 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
+  behavior_comparison?: BehaviorComparison;
+  behavior_flows?: BehaviorFlows;
   behavioral_changes?: {
     label: string;
     value: string;
@@ -165,4 +167,57 @@ export type RunDetail = {
       }[];
     }[];
   };
+};
+
+export type BehaviorChange = {
+  claim_id: string;
+  category: string;
+  label: string;
+  summary: string;
+  before: string | null;
+  after: string | null;
+  before_location: string | null;
+  after_location: string | null;
+  before_href: string | null;
+  after_href: string | null;
+};
+
+export type BehaviorCaller = {
+  name: string;
+  file: string;
+  depth: number;
+  via: string;
+  outside_diff: boolean;
+  entry_point: boolean;
+};
+
+export type BehaviorItem = {
+  name: string;
+  display_name: string;
+  file: string;
+  line: number | null;
+  location: string;
+  href: string | null;
+  exported: boolean;
+  removed: boolean;
+  changes: BehaviorChange[];
+  reach: {
+    callers: BehaviorCaller[];
+    entry_points: string[];
+    files: string[];
+    outside_diff: number;
+    tests: string[];
+    truncated: boolean;
+  };
+};
+
+export type BehaviorComparison = {
+  summary: string;
+  items: BehaviorItem[];
+};
+
+export type BehaviorFlows = {
+  before: string;
+  after: string;
+  legend: string;
 };
