@@ -517,18 +517,6 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
           ) : null}
         </div>
       ))}
-      {section.watch?.length ? (
-        <div className="flow-focus">
-          <h4>Worth checking</h4>
-          <ul>
-            {section.watch.map((item) => (
-              <li key={item}>
-                <InlineCode text={item} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
       {areas.length ? (
         <p className="kicker">
           Written by the configured model from rule-derived impact findings; each item was checked against the facts it

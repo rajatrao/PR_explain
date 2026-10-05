@@ -563,7 +563,6 @@ class _NarratingProvider:
                 {"title": "Sign-in sessions", "severity": "high", "summary": "Sessions now carry their lifetime; every current sign-in path supplies one.", "who_notices": "Sign-in and token refresh.", "fact_ids": contract},
                 {"title": "Session API", "severity": "low", "summary": "`createSession` needs a TTL.", "fact_ids": contract},
             ],
-            "watch": [],
         }
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 

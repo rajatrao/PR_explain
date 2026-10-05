@@ -211,13 +211,12 @@ class ImpactAreaNote(BaseModel):
 
 
 class ImpactNarrative(BaseModel):
-    """What the pull request affects and what to watch, written from impact and behavior facts only."""
+    """What the pull request affects, written from impact and behavior facts only."""
 
     model_config = ConfigDict(extra="ignore")
 
     overview: str = ""
     areas: list[ImpactAreaNote] = Field(default_factory=list)
-    watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
 class ExplanationDocument(BaseModel):

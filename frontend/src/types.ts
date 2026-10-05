@@ -179,6 +179,5 @@ export type ImpactSummary = {
   source: "model" | "none";
   overview: string;
   areas: { title: string; severity: "high" | "medium" | "low"; summary: string; who_notices: string }[];
-  watch: string[];
 };
 
