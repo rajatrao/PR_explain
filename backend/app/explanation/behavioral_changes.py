@@ -237,7 +237,7 @@ class Grounding:
         chunks.extend(text for text in (change.before, change.after, change.before_when, change.after_when) if text)
         return chunks
 
-    def problem(self, text: str, allowed: str, *, may_name_entries: bool) -> str | None:
+    def problem(self, text: str, allowed: str, *, may_name_entries: bool, allow: set[str] | None = None) -> str | None:
         if not text.strip():
             return "empty text"
         if _DEFECT.search(text):
@@ -248,7 +248,7 @@ class Grounding:
             return "quoted a call"
         if _FILE_PATH.search(text):
             return "named a file"
-        permitted = self.entry_points if may_name_entries else set()
+        permitted = (self.entry_points if may_name_entries else set()) | (allow or set())
         for name in self.callables - permitted:
             # A plain word such as "charge" or "record" is also English; it counts as a name only in code form.
             if _PLAIN_WORD.match(name):

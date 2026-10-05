@@ -220,6 +220,24 @@ class ImpactNarrative(BaseModel):
     watch: list[BehaviorWatchNote] = Field(default_factory=list)
 
 
+class SummaryItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    fact_ids: list[str] = Field(default_factory=list)
+
+
+class ReviewSummary(BaseModel):
+    """The reviewer summary: what changed, review focus, blast radius, potential risks."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    what_changed: str = ""
+    review_focus: list[SummaryItem] = Field(default_factory=list)
+    blast_radius: list[SummaryItem] = Field(default_factory=list)
+    risks: list[SummaryItem] = Field(default_factory=list)
+
+
 class ExplanationDocument(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -236,6 +254,8 @@ class ExplanationDocument(BaseModel):
     behavior_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
     impact: ImpactNarrative | None = None
     impact_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    review_summary: ReviewSummary | None = None
+    summary_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
         return [

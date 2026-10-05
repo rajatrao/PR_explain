@@ -182,3 +182,20 @@ def test_no_behavior_claims_means_no_sections():
     assert comparison["items"] == []
     flows = build_behavior_flows(comparison, symbols=[], relationships=[])
     assert render_behavior_flows_markdown(flows) == ""
+
+
+def test_review_diagram_marks_changed_new_removed_and_error_paths():
+    from app.explanation.review_diagram import build_review_diagram
+
+    symbols, relationships, claims, evidences = _facts()
+    chart = build_review_diagram(symbols=symbols, relationships=relationships, claims=claims, evidences=evidences)
+    assert chart.startswith("flowchart LR")
+    assert 'c0["charge<br/><b>CHANGED: inputs, errors, result, branching</b>"]' in chart
+    assert 'c1["legacy_refund<br/><b>REMOVED</b>"]' in chart
+    assert 'post_checkout<br/><b>entry point</b>' in chart
+    assert 'd_audit_record["audit.record<br/><b>NEW</b>"]' in chart
+    assert 'c0 -.->|"REMOVED call"| d_logger_info' in chart
+    assert "InvalidOrder when total #lt; 0 (was ValueError)<br/><b>ERROR · CHANGED</b>" in chart
+    assert "returns None when total == 0<br/><b>NEW early exit</b>" in chart
+    # The resolved callee and the spelling in the diff are one node, not two.
+    assert "d_record[" not in chart

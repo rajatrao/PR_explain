@@ -275,7 +275,7 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert NEW in stored
     assert OLD not in stored
     assert "old prose" not in stored
-    assert "second bullet" in stored
+    assert "**2. Review focus**" in stored  # the reviewer summary replaced the bullet list
     assert "What changed" in stored
     assert comments.comments[details_id] == RETIRED_DETAILS_NOTE
 
