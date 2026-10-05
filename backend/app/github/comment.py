@@ -499,7 +499,8 @@ def _append_behavioral_changes(parts: list[str], *, document, symbols, relations
         evidences=evidence or [],
     )
     narrative = getattr(document, "behavioral_changes", None) if document is not None else None
-    section = build_behavioral_section(narrative=narrative, facts=facts, prescreened=True)
+    reasons = list(getattr(document, "behavior_screening", None) or []) if document is not None else []
+    section = build_behavioral_section(narrative=narrative, facts=facts, prescreened=True, reasons=reasons)
     parts.append(render_behavioral_changes_markdown(section))
 
 

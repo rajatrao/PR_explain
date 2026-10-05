@@ -68,6 +68,7 @@ def build_behavioral_section(
     narrative: BehavioralNarrative | dict | None,
     facts: list[BehaviorFunctionFact],
     prescreened: bool = False,
+    reasons: list[str] | None = None,
 ) -> dict:
     """The section the Explain tab and the comment show.
 
@@ -80,10 +81,14 @@ def build_behavioral_section(
         chosen = screen_narrative(narrative, facts) if narrative else None
     fact_count = sum(len(fact.changes) for fact in facts)
     if chosen is None or not chosen.changes:
+        overview = NO_FACTS
+        if fact_count:
+            why = [reason for reason in (reasons or []) if reason]
+            overview = NO_NARRATIVE + (f" Reason: {why[0]}." if why else "")
         return {
             "source": "none",
             "fact_count": fact_count,
-            "overview": NO_NARRATIVE if fact_count else NO_FACTS,
+            "overview": overview,
             "changes": [],
             "watch": [],
         }

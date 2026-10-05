@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 from sqlalchemy import select
@@ -10,6 +11,7 @@ from app.analyzer.types import Snapshot
 from app.config import Settings
 from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
+from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import screen_narrative
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
@@ -149,11 +151,13 @@ def execute_explain(
         return
     document = _grounded_document(session, run, depth, settings) or validation.document
     if depth == "quick":
-        # Keep the model's behavioral narrative only after it is checked against the packet's behavior facts.
-        model_document = validation.document
-        narrative = model_document.behavioral_changes if model_document is not None else None
+        # Read the narrative from the model's raw reply. The validated document may be the packet-built
+        # fallback (the quick prompt leaves statement arrays empty), which never carries a narrative.
+        # Keep it only after it is checked against the packet's behavior facts.
+        narrative = _raw_narrative(result.content)
         screening: list[str] = []
         document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts, screening)
+        document.behavior_screening = [] if document.behavioral_changes else screening[:8]
         kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
     _store_explanation(
         session,
@@ -264,7 +268,17 @@ def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: 
         )
     ).first()
     if row is not None:
-        return ExplanationPacket.model_validate(row.payload)
+        packet = ExplanationPacket.model_validate(row.payload)
+        if depth == "quick" and not packet.behavior_facts:
+            # Packets stored before behavior facts existed: add them from the stored analysis.
+            stored = load_result(session, run)
+            packet.behavior_facts = build_behavior_facts(
+                symbols=stored.symbols,
+                relationships=stored.relationships,
+                claims=stored.claims,
+                evidences=stored.evidences,
+            )
+        return packet
     result = load_result(session, run)
     revision = run.revision
     snapshot = Snapshot(
@@ -304,6 +318,18 @@ def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
     if kept is not None:
         return kept, repaired
     return repaired_validation, repaired
+
+
+def _raw_narrative(content: str | None) -> dict | None:
+    """The `behavioral_changes` object from the model's raw JSON reply, if it sent one."""
+    try:
+        payload = json.loads(content or "")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    narrative = payload.get("behavioral_changes")
+    return narrative if isinstance(narrative, dict) else None
 
 
 def _model_saved(validation) -> bool:

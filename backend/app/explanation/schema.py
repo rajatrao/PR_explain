@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
 
 ExplanationDepth = Literal["quick", "developer", "deep", "architecture"]
 Epistemic = Literal["FACT", "INFERENCE", "UNKNOWN"]
@@ -198,6 +199,8 @@ class ExplanationDocument(BaseModel):
     unknowns: list[Statement] = Field(default_factory=list)
     review_questions: list[Statement] = Field(default_factory=list)
     behavioral_changes: BehavioralNarrative | None = None
+    # Why the narrative was not kept. Set by the pipeline; hidden from the model's output schema.
+    behavior_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
         return [
