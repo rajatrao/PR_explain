@@ -2,13 +2,13 @@ import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
 import type {
-  BehaviorComparison,
   BehaviorFlows,
-  BehaviorItem,
   ChangeFlowDiagram,
   Epistemic,
   FileChange,
   RunDetail,
+  SystemBehavior,
+  SystemBehaviorChange,
 } from "./types";
 
 mermaid.initialize({
@@ -192,8 +192,8 @@ export function RunPage({ id }: { id: string }) {
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
+              <SystemBehaviorSection summary={run.system_behavior} />
               <BehaviorFlowsSection flows={run.behavior_flows} />
-              <BehaviorComparisonSection comparison={run.behavior_comparison} />
               <BehavioralChangesSection rows={run.behavioral_changes ?? []} />
               <LabeledExplainSection title="System Impact" rows={run.system_impact ?? []} />
               <section className="narrative">
@@ -535,106 +535,103 @@ function BehaviorFlowsSection({ flows }: { flows?: BehaviorFlows }) {
   );
 }
 
-function BehaviorComparisonSection({ comparison }: { comparison?: BehaviorComparison }) {
-  const items = comparison?.items ?? [];
-  if (items.length === 0) return null;
+function SystemBehaviorSection({ summary }: { summary?: SystemBehavior }) {
+  const changes = summary?.changes ?? [];
+  if (changes.length === 0) return null;
+  const notes = [summary?.unaffected, summary?.not_summarized ? `${summary.not_summarized} other statement change${summary.not_summarized === 1 ? " is" : "s are"} in the diff but not summarized here.` : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <section className="narrative behavior-comparison">
-      <h3>Old vs New Behavior</h3>
-      {comparison?.summary ? <p className="behavior-summary">{comparison.summary}</p> : null}
-      {items.map((item) => (
-        <BehaviorCard key={`${item.file}:${item.name}`} item={item} />
+    <section className="narrative system-behavior">
+      <h3>System Behavior Change</h3>
+      {summary?.headline ? <p className="behavior-summary">{summary.headline}</p> : null}
+      {changes.map((change) => (
+        <SystemBehaviorCard key={`${change.file}:${change.subject}`} change={change} />
       ))}
+      {notes ? <p className="kicker">{notes}</p> : null}
     </section>
   );
 }
 
-function BehaviorCard({ item }: { item: BehaviorItem }) {
-  const callers = item.reach.callers;
+function SystemBehaviorCard({ change }: { change: SystemBehaviorChange }) {
+  const reached = change.entry_points.length ? change.entry_points : change.reached_through;
   return (
-    <div className={item.removed ? "behavior-card removed" : "behavior-card"}>
+    <div className={change.removed ? "behavior-card removed" : "behavior-card"}>
       <div className="behavior-card-head">
-        <code className="behavior-name">{item.display_name}</code>
-        {item.href ? (
-          <a href={item.href} target="_blank" rel="noreferrer" className="behavior-location">
-            {item.location}
-          </a>
-        ) : (
-          <span className="behavior-location">{item.location}</span>
-        )}
-        {item.exported ? <span className="badge">exported</span> : null}
-        {item.removed ? <span className="badge badge-removed">removed</span> : null}
+        <code className="behavior-name">{change.subject}</code>
+        <span className="behavior-location">{change.file}</span>
+        {change.exported ? <span className="badge">exported</span> : null}
+        {change.removed ? <span className="badge badge-removed">removed</span> : null}
       </div>
       <table className="behavior-table">
         <thead>
           <tr>
-            <th>Aspect</th>
-            <th>Before (base)</th>
-            <th>After (head)</th>
-            <th>What changes</th>
+            <th>Before this PR</th>
+            <th>After this PR</th>
           </tr>
         </thead>
         <tbody>
-          {item.changes.map((change) => (
-            <tr key={change.claim_id}>
-              <td className="behavior-aspect">{change.label}</td>
+          {change.rows.map((row, index) => (
+            <tr key={`${index}-${row.now}`}>
               <td className="behavior-before">
-                <CodeSide text={change.before} href={change.before_href} location={change.before_location} />
+                <InlineCode text={row.before} />
               </td>
               <td className="behavior-after">
-                <CodeSide text={change.after} href={change.after_href} location={change.after_location} />
+                <InlineCode text={row.now} />
               </td>
-              <td>{change.summary}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      {item.removed ? null : (
+      {change.removed ? null : (
         <div className="behavior-reach">
-          <span className="detail-label">Who now sees this</span>
-          {callers.length === 0 ? (
-            <span>No stored caller reaches it.</span>
-          ) : (
-            <ul>
-              {callers.map((caller) => (
-                <li key={`${caller.file}:${caller.name}:${caller.depth}`}>
-                  <code>{caller.name}</code>
-                  {caller.file ? <span className="kicker"> {caller.file}</span> : null}
-                  {caller.depth > 1 ? (
-                    <span className="kicker">
-                      {" "}
-                      via <code>{caller.via}</code>
-                    </span>
-                  ) : null}
-                  {caller.entry_point ? <span className="badge">entry point</span> : null}
-                  {caller.outside_diff ? <span className="badge badge-outside">outside diff</span> : null}
-                </li>
-              ))}
-              {item.reach.truncated ? <li className="kicker">More callers were not walked.</li> : null}
-            </ul>
-          )}
+          <span className="detail-label">Reached from</span>
+          <span>
+            {reached.length ? (
+              <>
+                {reached.map((name, index) => (
+                  <Fragment key={name}>
+                    {index ? ", " : ""}
+                    <code>{name}</code>
+                  </Fragment>
+                ))}
+                {change.entry_points.length ? <span className="kicker"> (entry points)</span> : null}
+              </>
+            ) : (
+              "No stored caller."
+            )}
+          </span>
+          {change.call_sites.length ? (
+            <>
+              <span className="detail-label">Callers at head</span>
+              <ul>
+                {change.call_sites.map((site) => (
+                  <li key={`${site.file}:${site.line}:${site.call}`}>
+                    <code>{site.caller}</code> → <code>{site.call}</code>
+                    {site.file ? <span className="kicker"> {site.file}{site.line ? `:${site.line}` : ""}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           <span className="detail-label">Tests</span>
-          <span>{item.reach.tests.length ? item.reach.tests.join(", ") : "None reference it."}</span>
+          <span>{change.tests.length ? change.tests.join(", ") : "None reference it."}</span>
         </div>
       )}
     </div>
   );
 }
 
-function CodeSide({ text, href, location }: { text: string | null; href: string | null; location: string | null }) {
-  if (text === null) return <span className="behavior-none">—</span>;
+/** Render `code` spans inside a sentence without interpreting any other markup. */
+function InlineCode({ text }: { text: string }) {
+  const parts = text.split(/(``\s.+?\s``|`[^`]+`)/g);
   return (
     <>
-      <code className="behavior-code">{text}</code>
-      {location ? (
-        href ? (
-          <a className="behavior-line" href={href} target="_blank" rel="noreferrer">
-            {location}
-          </a>
-        ) : (
-          <span className="behavior-line">{location}</span>
-        )
-      ) : null}
+      {parts.map((part, index) => {
+        if (part.startsWith("`` ") && part.endsWith(" ``")) return <code key={index}>{part.slice(3, -3)}</code>;
+        if (part.length > 1 && part.startsWith("`") && part.endsWith("`")) return <code key={index}>{part.slice(1, -1)}</code>;
+        return <Fragment key={index}>{part}</Fragment>;
+      })}
     </>
   );
 }

@@ -936,7 +936,7 @@ def _behavior_claims(snapshot: Snapshot, functions: list[Symbol], add_claim, add
                 start_line=delta.before_line,
                 end_line=delta.before_line,
                 symbol=delta.symbol,
-                description=delta.category,
+                description=_behavior_description(delta.category, delta.before_guard),
                 snippet=delta.before,
             )
             evidence_ids.append(before.id)
@@ -950,7 +950,7 @@ def _behavior_claims(snapshot: Snapshot, functions: list[Symbol], add_claim, add
                 start_line=delta.after_line,
                 end_line=delta.after_line,
                 symbol=delta.symbol,
-                description=delta.category,
+                description=_behavior_description(delta.category, delta.after_guard),
                 snippet=delta.after,
             )
             evidence_ids.append(after.id)
@@ -962,3 +962,8 @@ def _behavior_claims(snapshot: Snapshot, functions: list[Symbol], add_claim, add
             subject=owner,
             evidence_ids=evidence_ids,
         )
+
+
+def _behavior_description(category: str, guard: str | None) -> str:
+    """Category, then the enclosing condition read from the same side of the diff when there is one."""
+    return f"{category}\nwhen: {guard}" if guard else category

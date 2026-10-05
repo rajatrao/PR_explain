@@ -400,7 +400,7 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
   h1 { font-size: 32px; }
 }
 
-/* Old flow vs New flow, Old vs New Behavior */
+/* System Behavior Change, Old flow vs New flow */
 .behavior-flows h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
 .flow-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .flow-side { min-width: 0; border-top: 3px solid #d9d0c3; padding-top: 8px; }
@@ -419,12 +419,10 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 .behavior-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
 .behavior-table th { text-align: left; font-weight: 600; border-bottom: 1px solid #d9d0c3; padding: 4px 6px; }
 .behavior-table td { vertical-align: top; border-bottom: 1px solid #ebe4d8; padding: 6px; overflow-wrap: anywhere; }
-.behavior-table th:first-child, .behavior-aspect { width: 92px; }
-.behavior-code { display: block; white-space: pre-wrap; font-size: 12.5px; padding: 4px 6px; border-radius: 4px; }
-.behavior-before .behavior-code { background: #fdecea; color: #7b241c; }
-.behavior-after .behavior-code { background: #e9f7ef; color: #145a32; }
-.behavior-line { display: block; font-size: 11px; color: #6b6255; margin-top: 2px; }
-.behavior-none { color: #9a8f80; }
+.behavior-table th:first-child { width: 50%; }
+.behavior-before { background: #fdf3f1; }
+.behavior-after { background: #f1faf4; }
+.behavior-table code { font-size: 12.5px; }
 .behavior-reach { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 10px; font-size: 14px; }
 .behavior-reach ul { margin: 0; padding-left: 18px; }
 @media (max-width: 800px) {
