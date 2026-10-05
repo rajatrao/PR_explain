@@ -2,7 +2,7 @@
 
 Two layers. ``build_impact`` derives findings by rule from stored facts (below). Those findings
 go into the packet as IMPACT FACTS; the configured model writes the reviewer-facing summary
-from them (overview, impact areas with severity, things worth checking), with no
+from them (an overview and impact areas with severity), with no
 implementation details. ``screen_impact`` keeps an item only when it cites known facts, names
 no function, method, class, or file, uses no code token outside its cited facts, and is not
 rated above the most severe finding it cites. Without a usable summary the section says so.
@@ -310,7 +310,6 @@ def _id(item):
 NO_FACTS = "No impact beyond the changed code was found."
 NO_SUMMARY = "An impact summary is not available for this commit: the model's summary was missing or did not pass the grounding check."
 AREA_CAP = 5
-WATCH_CAP = 3
 
 
 def build_impact_facts(*, claims, evidences, behavior_facts: list[BehaviorFunctionFact]) -> list[ImpactFact]:
@@ -389,20 +388,11 @@ def screen_impact(
         return None
     areas.sort(key=lambda item: _RANK[item.severity])
 
-    watch = []
-    for note in narrative.watch:
-        allowed = grounding.scope(note.fact_ids)
-        if allowed is None or "?" not in note.text:
-            continue
-        if problem(note.text, allowed) is None:
-            watch.append(note)
-        if len(watch) >= WATCH_CAP:
-            break
     overview = narrative.overview.strip()
     everything = grounding.scope([fact.id for fact in impact_facts]) or ""
     if overview and problem(overview, everything):
         overview = ""
-    return ImpactNarrative(overview=overview, areas=areas, watch=watch)
+    return ImpactNarrative(overview=overview, areas=areas)
 
 
 def build_impact_section(
@@ -422,7 +412,7 @@ def build_impact_section(
         if impact_facts:
             why = [reason for reason in (reasons or []) if reason]
             overview = NO_SUMMARY + (f" Reason: {why[0]}." if why else "")
-        return {"source": "none", "overview": overview, "areas": [], "watch": []}
+        return {"source": "none", "overview": overview, "areas": []}
     return {
         "source": "model",
         "overview": chosen.overview,
@@ -430,7 +420,6 @@ def build_impact_section(
             {"title": note.title, "severity": note.severity, "summary": note.summary, "who_notices": note.who_notices}
             for note in chosen.areas
         ],
-        "watch": [note.text for note in chosen.watch],
     }
 
 
@@ -447,11 +436,6 @@ def render_impact_markdown(section: dict) -> str:
         lines.append(f"- {area['summary']}")
         if area.get("who_notices"):
             lines.append(f"- **Who notices:** {area['who_notices']}")
-        lines.append("")
-    watch = section.get("watch") or []
-    if watch:
-        lines.append("**Worth checking**")
-        lines.extend(f"- {item}" for item in watch)
         lines.append("")
     lines.append("_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._")
     return "\n".join(lines).strip()

@@ -217,7 +217,6 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
                 {"title": "Login", "severity": "low", "summary": "Users of login see longer sessions.", "who_notices": "`login` callers", "fact_ids": [contract_id]},
                 {"title": "Caching", "severity": "low", "summary": "Sessions are cached in `REDIS_URL`.", "fact_ids": [contract_id]},
             ],
-            "watch": [{"text": "Is the longer refresh lifetime intended?", "fact_ids": [contract_id]}],
         }
     )
     reasons: list[str] = []
@@ -235,7 +234,7 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
     markdown = render_impact_markdown(section)
     assert markdown.startswith("### Impact\n\nCheckout and sign-in both behave differently")
     assert "**Checkout failures** (high)" in markdown
-    assert "**Worth checking**" in markdown
+    assert "Worth checking" not in markdown
     for name in ("createSession", "post_checkout", "charge(", "login"):
         assert name not in markdown
 
