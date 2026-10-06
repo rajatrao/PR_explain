@@ -120,7 +120,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Impact" in explain
     assert "| Area | Reason | Evidence file |" not in details
     impact_md = explain.split("### Impact", 1)[1].split("## ", 1)[0]
-    assert "Summarized from the analyzer's findings" in impact_md and "**Evidence:**" in impact_md
+    assert "Summarized by flow and by system interface" in impact_md and "**Evidence:**" in impact_md
     assert "createSession" not in impact_md.split("**Evidence:**")[0]
     assert explain.index("### Behavioral Changes") < explain.index("### Impact")
     assert "- createSession changed." not in explain  # Explain has no summary section

@@ -185,26 +185,27 @@ def test_entry_points_may_be_named_only_in_impact():
     assert screen_narrative(bad, _facts()) is None
 
 
-def test_no_usable_narrative_falls_back_to_a_plain_summary_of_the_facts():
+def test_no_usable_narrative_falls_back_to_flow_and_system_level_summaries():
     narrative = BehavioralNarrative(
         changes=[{"title": "X", "before": "Previously, `made_up`.", "after": "Now `other`.", "fact_ids": ["b1"]}]
     )
     facts = _facts()
     facts[0].changes[0].location = "app/billing.py:13"
-    section = build_behavioral_section(narrative=narrative, facts=facts)
+    surfaces = [
+        {"level": "api", "change": "added", "name": "POST /api/refunds", "detail": "", "evidence": {"label": "app/api.py:40", "href": None}},
+    ]
+    section = build_behavioral_section(narrative=narrative, facts=facts, surfaces=surfaces)
     assert section["source"] == "rules"
-    # Public functions only, in plain words: no code, conditions, files, or call syntax.
-    assert [c["title"] for c in section["changes"]] == ["Charge"]
-    change = section["changes"][0]
-    assert change["before"] == "In one case it failed with one kind of error."
-    assert change["after"] == (
-        "In that case it now fails with a different error. It returns early in a new case. It now also triggers audit record."
-    )
-    assert change["impact"] == "Anything that goes through post checkout."
-    assert change["evidence"][0]["label"] == "app/billing.py:13"
-    markdown = render_behavioral_changes_markdown(section)
-    for code in ("made_up", "ValueError", "total", "`", "audit.record", "app/billing.py:13`"):
-        assert code not in markdown.split("**Evidence:**")[0], code
+    # System interfaces first, then one item per flow (entry points), never one per function.
+    assert [c["title"] for c in section["changes"]] == ["HTTP interface", "Post checkout flow"]
+    assert section["changes"][0]["after"] == "The service adds route POST /api/refunds."
+    flow = section["changes"][1]
+    assert flow["before"].startswith("Previously, requests through this flow failed with one kind of error at the charge step")
+    assert flow["after"] == "Now they fail with a different error there; can end early at the charge step in that case; also trigger audit record there."
+    assert flow["evidence"][0]["label"] == "app/billing.py:13"
+    markdown = render_behavioral_changes_markdown(section).split("**Evidence:**")[0]
+    for code in ("made_up", "ValueError", "total", "`", "audit.record", "_fee_for"):
+        assert code not in markdown, code
 
 
 def test_oauth_facts_carry_entry_points_and_contract_check():

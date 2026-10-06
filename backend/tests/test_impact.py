@@ -245,7 +245,8 @@ def test_missing_impact_summary_falls_back_to_a_plain_summary():
     section = build_impact_section(narrative=None, behavior_facts=[_charge(), _session()], impact_facts=facts)
     assert section["source"] == "rules"
     titles = [area["title"] for area in section["areas"]]
-    assert set(titles) == {"Charge", "Create session"}
+    # One area per flow, named by its entry points, not per function.
+    assert all(title.endswith(("flow", "flows")) for title in titles)
     # Severity comes from the analyzer's own findings, highest first.
     assert section["areas"][0]["severity"] == "high"
     markdown = render_impact_markdown(section).split("**Evidence:**")[0]
