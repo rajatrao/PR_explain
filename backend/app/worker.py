@@ -22,12 +22,15 @@ logger = logging.getLogger("app.worker")
 
 
 class _FailingProvider:
+    """Provider used when no LLM is configured; every call fails with the configuration error so the run records it."""
+
     id = "unconfigured"
 
     def __init__(self, message: str) -> None:
         self._message = message
 
     def explain(self, request):  # noqa: ANN001
+        """Raise the configuration error."""
         raise LLMConfigError(self._message)
 
 
@@ -74,12 +77,15 @@ class _UnavailableCommentClient:
         self._reason = reason
 
     def list_comments(self, full_name: str, pr_number: int) -> list[dict]:
+        """Raise the reason the comment client is unavailable."""
         raise RuntimeError(self._reason)
 
     def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
+        """Raise the reason the comment client is unavailable."""
         raise RuntimeError(self._reason)
 
     def update_comment(self, full_name: str, comment_id: int, body: str) -> None:
+        """Raise the reason the comment client is unavailable."""
         raise RuntimeError(self._reason)
 
 

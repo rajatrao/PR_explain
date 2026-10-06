@@ -383,6 +383,7 @@ class Grounding:
         return "\n".join(chunk for chunk in chunks if chunk)
 
     def all_ids(self) -> list[str]:
+        """Every behavior (b...) and impact (i...) fact id."""
         return [*self.by_change, *self.by_impact]
 
     def strip_judgments(self, text: str, ids: list[str]) -> str:
@@ -426,9 +427,11 @@ class Grounding:
         return True
 
     def known(self, ids: list[str]) -> list[str]:
+        """The ids from ``ids`` that name a known behavior or impact fact."""
         return [item for item in ids if item in self.by_change or item in self.by_impact]
 
     def scope(self, ids: list[str]) -> str | None:
+        """The text of the cited facts (statements, conditions, entry points, notes), or None when no id is known."""
         valid = self.known(ids)
         if not valid:
             return None
@@ -460,6 +463,10 @@ class Grounding:
         allow: set[str] | None = None,
         entries: set[str] | None = None,
     ) -> str | None:
+        """Why ``text`` is not grounded in ``allowed``, or None.
+
+        Rejects asserted defects, lists of code edits, call syntax, file paths, function names (entry points only where allowed), code tokens absent from the cited facts, and numbers, quoted values, or failures the facts do not show.
+        """
         if not text.strip():
             return "empty text"
         claim = _claim_problem(text, allowed)

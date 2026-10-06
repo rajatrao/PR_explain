@@ -16,11 +16,14 @@ from app.worker import process_available_job
 
 
 class CountingSource:
+    """Snapshot source for the local seed that returns a fixed snapshot and counts fetches."""
+
     def __init__(self, snapshot) -> None:
         self.snapshot = snapshot
         self.calls = 0
 
     def fetch(self, full_name: str, base_sha: str, head_sha: str):
+        """Return the fixed snapshot with the requested repository and commits."""
         self.calls += 1
         self.snapshot.head_sha = head_sha
         self.snapshot.base_sha = base_sha
@@ -29,15 +32,19 @@ class CountingSource:
 
 
 class MemoryComments:
+    """Comment client for the local seed that accepts writes without calling GitHub, or fails every write."""
+
     def __init__(self, fail: bool = False) -> None:
         self.fail = fail
 
     def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
+        """Pretend to post a comment and return id 1, or raise when set to fail."""
         if self.fail:
             raise RuntimeError("github write failed")
         return 1
 
     def update_comment(self, full_name: str, comment_id: int, body: str) -> None:
+        """Pretend to update a comment, or raise when set to fail."""
         if self.fail:
             raise RuntimeError("github write failed")
 

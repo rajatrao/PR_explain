@@ -91,6 +91,8 @@ _IDENT = re.compile(r"^[A-Za-z_]\w*$")
 
 @dataclass
 class _Line:
+    """One line of a unified diff hunk: its base and head line numbers, text, indentation, and how the behavior extractor classified it."""
+
     old: int | None
     new: int | None
     text: str
@@ -102,6 +104,8 @@ class _Line:
 
 @dataclass
 class _Block:
+    """A run of removed and added lines in one hunk, anchored at a head line, that the extractor pairs into before/after statements."""
+
     anchor: int
     removed: list[_Line] = field(default_factory=list)
     added: list[_Line] = field(default_factory=list)
@@ -109,6 +113,11 @@ class _Block:
 
 @dataclass
 class BehaviorDelta:
+    """One before/after statement pair read from the diff for a changed function.
+
+    Carries the category (signature, error, return, condition, call, value, logging, logic, or removed_function), a one-line summary, the base and head statements with their line numbers, and the enclosing condition on each side.
+    """
+
     file_path: str
     symbol: str | None
     symbol_id: str | None
@@ -123,6 +132,7 @@ class BehaviorDelta:
 
     @property
     def label(self) -> str:
+        """Human label for the category, such as "Inputs" or "Errors"."""
         return CATEGORY_LABEL.get(self.category, "Logic")
 
 

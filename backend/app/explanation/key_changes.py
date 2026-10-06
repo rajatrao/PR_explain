@@ -46,6 +46,8 @@ _CATEGORY_WORD = {
 
 
 class _Facts:
+    """Facts the Key Changes and outside-caller rows are built from: the behavior comparison per changed function, files in the diff, call contexts, removed functions still called, and stored CALLS edges."""
+
     def __init__(self, *, symbols, relationships, claims, evidences, repo, sha) -> None:
         comparison = build_behavior_comparison(
             symbols=symbols or [],

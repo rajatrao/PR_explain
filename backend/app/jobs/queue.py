@@ -11,6 +11,8 @@ from app.jobs.events import record_event
 
 
 class RetryNotAvailable(Exception):
+    """Raised when a run has no failed phase that can be retried; ``detail`` says why."""
+
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)

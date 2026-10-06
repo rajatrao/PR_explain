@@ -30,6 +30,8 @@ def _now() -> datetime:
 
 
 class GithubInstallation(Base):
+    """A GitHub App installation (an account that installed the app) and its repositories."""
+
     __tablename__ = "github_installations"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -43,6 +45,8 @@ class GithubInstallation(Base):
 
 
 class Repository(Base):
+    """A repository the app can see, linked to its installation, with its pull requests."""
+
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -61,6 +65,8 @@ class Repository(Base):
 
 
 class PullRequest(Base):
+    """A pull request in a repository, with the id of the explanation comment posted on it and its revisions."""
+
     __tablename__ = "pull_requests"
     __table_args__ = (UniqueConstraint("repository_id", "number", name="uq_pr_repo_number"),)
 
@@ -76,6 +82,8 @@ class PullRequest(Base):
 
 
 class Revision(Base):
+    """One head commit of a pull request (head and base SHA, title, body) and the analysis run for it."""
+
     __tablename__ = "revisions"
     __table_args__ = (UniqueConstraint("pull_request_id", "head_sha", name="uq_revision_sha"),)
 
@@ -107,6 +115,8 @@ class Revision(Base):
 
 
 class WebhookDelivery(Base):
+    """A received GitHub webhook delivery, kept so a redelivered event is processed once."""
+
     __tablename__ = "webhook_deliveries"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -116,6 +126,8 @@ class WebhookDelivery(Base):
 
 
 class AnalysisRun(Base):
+    """The analysis of one revision: status of the analysis, explanation, and comment phases, plus the stored symbols, relationships, evidence, claims, packet, explanation, and events."""
+
     __tablename__ = "analysis_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -165,6 +177,8 @@ class AnalysisRun(Base):
 
 
 class AnalysisJob(Base):
+    """A queued unit of work for a run (analyze, explain, or comment) that a worker claims, runs, and retries."""
+
     __tablename__ = "analysis_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -189,6 +203,8 @@ class AnalysisJob(Base):
 
 
 class SymbolRow(Base):
+    """A stored symbol from a run's analysis."""
+
     __tablename__ = "symbols"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -205,6 +221,8 @@ class SymbolRow(Base):
 
 
 class RelationshipRow(Base):
+    """A stored relationship (CALLS, IMPORTS, TESTS, ...) between two symbols from a run's analysis."""
+
     __tablename__ = "relationships"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -222,6 +240,8 @@ class RelationshipRow(Base):
 
 
 class EvidenceRow(Base):
+    """A stored piece of evidence (file, lines, snippet) from a run's analysis."""
+
     __tablename__ = "evidences"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -240,6 +260,8 @@ class EvidenceRow(Base):
 
 
 class ClaimRow(Base):
+    """A stored claim from a run's analysis, with the public ids of its evidence and supporting claims."""
+
     __tablename__ = "claims"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
@@ -255,6 +277,8 @@ class ClaimRow(Base):
 
 
 class ClaimEvidence(Base):
+    """Link table between a claim and the evidence it cites."""
+
     __tablename__ = "claim_evidence"
 
     claim_id: Mapped[uuid.UUID] = mapped_column(
@@ -268,6 +292,8 @@ class ClaimEvidence(Base):
 
 
 class ClaimSupport(Base):
+    """Link table between a claim and another claim that supports it."""
+
     __tablename__ = "claim_support"
 
     claim_id: Mapped[uuid.UUID] = mapped_column(
@@ -281,6 +307,8 @@ class ClaimSupport(Base):
 
 
 class ExplanationPacketRow(Base):
+    """The explanation packet (the facts sent to the model) stored for a run, one per run."""
+
     __tablename__ = "explanation_packets"
     __table_args__ = (UniqueConstraint("run_id", name="uq_packet_run"),)
 
@@ -292,6 +320,8 @@ class ExplanationPacketRow(Base):
 
 
 class ExplanationRow(Base):
+    """The model explanation stored for a run, one per run: status, provider, model, prompt version, validated document, raw reply, and error."""
+
     __tablename__ = "explanations"
     __table_args__ = (UniqueConstraint("run_id", name="uq_explanation_run"),)
 
@@ -308,6 +338,8 @@ class ExplanationRow(Base):
 
 
 class PipelineEvent(Base):
+    """One step in a run's pipeline (webhook received, analysis, explanation, comment, ...) with its status and detail, in order."""
+
     __tablename__ = "pipeline_events"
     __table_args__ = (Index("ix_pipeline_events_run_ordinal", "run_id", "ordinal"),)
 
@@ -332,6 +364,8 @@ class PipelineEvent(Base):
 
 
 class RevisionDelta(Base):
+    """What changed between a revision and the previous revision of the same pull request: claims added and removed."""
+
     __tablename__ = "revision_deltas"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)

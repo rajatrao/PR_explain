@@ -10,6 +10,8 @@ from app.llm.provider import ExplainRequest, ExplanationCallError, LLMResult
 
 
 class OpenAICompatibleProvider:
+    """LLM provider for any OpenAI-compatible chat completions endpoint, using a JSON schema response format and temperature 0."""
+
     id = "openai"
 
     def __init__(
@@ -31,6 +33,7 @@ class OpenAICompatibleProvider:
         return f"OpenAICompatibleProvider(base_url={self._base_url!r}, model={self._model!r})"
 
     def explain(self, request: ExplainRequest) -> LLMResult:
+        """Send the request to the chat completions endpoint and return the reply text, model, and latency."""
         client = self._client or httpx.Client(timeout=self._timeout)
         close = self._client is None
         started = time.perf_counter()

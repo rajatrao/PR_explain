@@ -19,9 +19,14 @@ logger = logging.getLogger("app.bootstrap")
 
 
 class InstallationCatalog(Protocol):
-    def list_installations(self) -> list[dict]: ...
+    """Source of the GitHub App's installations and their repositories, used to seed the database at startup."""
 
-    def list_repositories(self, installation_id: int) -> list[dict]: ...
+    def list_installations(self) -> list[dict]:
+        """Return every installation of the GitHub App."""
+        ...
+
+    def list_repositories(self, installation_id: int) -> list[dict]:
+        """Return the repositories an installation can access."""
 
 
 def github_app_configured(settings: Settings) -> bool:
@@ -58,14 +63,17 @@ class GithubAppCatalog:
         self._owns_client = http is None
 
     def close(self) -> None:
+        """Close the HTTP client when this catalog created it."""
         if self._owns_client:
             self._http.close()
 
     def list_installations(self) -> list[dict]:
+        """Return every installation of the GitHub App, authenticated with the app's JWT."""
         token = app_jwt(self._settings)
         return _get_pages(self._http, self._settings.github_api_url, "/app/installations", token)
 
     def list_repositories(self, installation_id: int) -> list[dict]:
+        """Return the repositories an installation can access, authenticated with an installation token."""
         try:
             token = installation_token(self._settings, installation_id, http=self._http)
         except httpx.HTTPStatusError as exc:

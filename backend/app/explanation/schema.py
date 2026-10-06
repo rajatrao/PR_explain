@@ -9,6 +9,8 @@ Epistemic = Literal["FACT", "INFERENCE", "UNKNOWN"]
 
 
 class RevisionRef(BaseModel):
+    """The pull request revision a packet describes: repository, number, head and base SHA, title, and body."""
+
     model_config = ConfigDict(extra="ignore")
 
     repository: str
@@ -20,6 +22,8 @@ class RevisionRef(BaseModel):
 
 
 class ClaimRef(BaseModel):
+    """A claim as sent to the model in the packet."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -31,6 +35,8 @@ class ClaimRef(BaseModel):
 
 
 class SymbolRef(BaseModel):
+    """A symbol as sent to the model in the packet."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -44,6 +50,8 @@ class SymbolRef(BaseModel):
 
 
 class RelationshipRef(BaseModel):
+    """A relationship as sent to the model in the packet."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -56,6 +64,8 @@ class RelationshipRef(BaseModel):
 
 
 class ImpactRef(BaseModel):
+    """An impact area in the packet with the claims it rests on."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -65,6 +75,8 @@ class ImpactRef(BaseModel):
 
 
 class TestRef(BaseModel):
+    """A test that references a changed symbol, or a missing test, in the packet."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -75,6 +87,8 @@ class TestRef(BaseModel):
 
 
 class EvidenceRef(BaseModel):
+    """A piece of evidence as sent to the model in the packet."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -90,6 +104,8 @@ class EvidenceRef(BaseModel):
 
 
 class UnknownRef(BaseModel):
+    """Something the analysis could not determine, with the claim that says so."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -98,6 +114,8 @@ class UnknownRef(BaseModel):
 
 
 class ContextNote(BaseModel):
+    """A note about how the packet was built, such as claims omitted for the size budget."""
+
     model_config = ConfigDict(extra="ignore")
 
     code: str
@@ -150,6 +168,8 @@ class ImpactFact(BaseModel):
 
 
 class ExplanationPacket(BaseModel):
+    """The facts sent to the model for one revision: claims, symbols, evidence, tests, unknowns, behavior facts, and impact facts, fitted to a size budget."""
+
     model_config = ConfigDict(extra="ignore")
 
     revision: RevisionRef
@@ -166,6 +186,8 @@ class ExplanationPacket(BaseModel):
 
 
 class Statement(BaseModel):
+    """One sentence of an explanation, labeled FACT, INFERENCE, or UNKNOWN, with the claims and evidence it cites."""
+
     model_config = ConfigDict(extra="ignore")
 
     epistemic: Epistemic
@@ -175,6 +197,8 @@ class Statement(BaseModel):
 
 
 class BehaviorChangeNote(BaseModel):
+    """One model-written behavioral change: title, before, after, who notices, and the behavior facts it cites."""
+
     model_config = ConfigDict(extra="ignore")
 
     title: str
@@ -185,6 +209,8 @@ class BehaviorChangeNote(BaseModel):
 
 
 class BehaviorWatchNote(BaseModel):
+    """A question the model suggests a reviewer check, with the facts it cites."""
+
     model_config = ConfigDict(extra="ignore")
 
     text: str
@@ -202,6 +228,8 @@ class BehavioralNarrative(BaseModel):
 
 
 class ImpactAreaNote(BaseModel):
+    """One model-written impact area: title, severity, summary, and the facts it cites."""
+
     model_config = ConfigDict(extra="ignore")
 
     title: str
@@ -248,6 +276,8 @@ class ReviewFact(BaseModel):
 
 
 class _Grounded(BaseModel):
+    """Base for Review items: the fact ids and diff locations an item rests on, and whether rules or the model wrote it."""
+
     model_config = ConfigDict(extra="ignore")
 
     # Fact ids (b…, i…, r…) and diff locations ("path:line") the item rests on.
@@ -258,6 +288,8 @@ class _Grounded(BaseModel):
 
 
 class AttentionArea(_Grounded):
+    """A Review attention area: why it matters, what changed, what could go wrong, the files or functions involved, and a priority."""
+
     area: str
     why_it_matters: str
     what_changed: str
@@ -267,10 +299,14 @@ class AttentionArea(_Grounded):
 
 
 class ReviewerQuestion(_Grounded):
+    """A question a reviewer can ask the author."""
+
     question: str
 
 
 class PotentialBug(_Grounded):
+    """A possible bug or regression: the finding, its evidence, a triggering scenario, the impact, a confidence, and whether a rule confirms it."""
+
     finding: str
     evidence: str
     scenario: str
@@ -280,17 +316,23 @@ class PotentialBug(_Grounded):
 
 
 class MissingTest(_Grounded):
+    """A test scenario that should exist and does not appear to, grouped by kind."""
+
     group: TestGroup
     scenario: str
     verifies: str
 
 
 class SafeArea(_Grounded):
+    """An area reviewed that looks reasonable, and why."""
+
     area: str
     why: str
 
 
 class TopQuestion(_Grounded):
+    """One of the ranked top review questions, with why to ask it and the relevant code."""
+
     question: str
     why_ask: str
     relevant_code: str
@@ -327,6 +369,8 @@ class ReviewReport(BaseModel):
 
 
 class ExplanationDocument(BaseModel):
+    """The validated explanation stored for a run: summary and statements, plus the Review report and screening notes added by the pipeline."""
+
     model_config = ConfigDict(extra="ignore")
 
     summary: str
@@ -347,6 +391,7 @@ class ExplanationDocument(BaseModel):
     review_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
+        """Every statement in the document, across all statement lists."""
         return [
             *self.change_flow,
             *self.impacts,

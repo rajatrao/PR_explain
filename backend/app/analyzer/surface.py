@@ -60,6 +60,8 @@ _PACKAGE_META = {"name", "version", "private", "description", "type", "main", "m
 
 @dataclass
 class SurfaceFinding:
+    """A system surface the diff touches: an HTTP route, stored data, configuration, a dependency, or a web interface file, with whether it was added, removed, or changed and where."""
+
     level: str  # api | data | config | dependency | ui
     kind: str  # added | removed | changed
     name: str

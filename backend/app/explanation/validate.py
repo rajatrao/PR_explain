@@ -24,6 +24,8 @@ _STATEMENT_FIELDS = (
 
 @dataclass
 class ValidationResult:
+    """Result of validating a model reply against the packet: whether it passed, the grounded document, errors, how many statements were dropped, and the raw text."""
+
     ok: bool
     document: ExplanationDocument | None
     errors: list[str] = field(default_factory=list)

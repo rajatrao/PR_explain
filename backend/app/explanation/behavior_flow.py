@@ -154,22 +154,27 @@ def _draw_item(index: int, item: dict, symbol, callees_of, before: "_Diagram", a
 
 
 class _Diagram:
+    """Builds one Mermaid flowchart: nodes, edges, and styles, rendered to text."""
+
     def __init__(self) -> None:
         self.nodes: dict[str, tuple[str, str, str]] = {}
         self.edges: list[tuple[str, str, str, str | None]] = []
 
     def node(self, node_id: str, label: str, css: str, *, shape: str = "box") -> None:
+        """Add a node once, with its label and style class."""
         current = self.nodes.get(node_id)
         if current and current[1] in {"focus", "gone", "new"} and css in {"caller", "callee", "entry"}:
             return
         self.nodes[node_id] = (label, css, shape)
 
     def edge(self, source: str, target: str, arrow: str, css: str | None) -> None:
+        """Add an edge between two nodes, optionally styled."""
         key = (source, target, arrow, css)
         if key not in self.edges:
             self.edges.append(key)
 
     def render(self, title: str, *, side: str) -> str:
+        """Return the flowchart as Mermaid text."""
         if not self.nodes:
             return ""
         lines = ["flowchart LR"]

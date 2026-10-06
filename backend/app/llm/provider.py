@@ -9,6 +9,8 @@ from app.explanation.schema import ExplanationPacket
 
 
 class ExplainRequest(BaseModel):
+    """One model call: the packet, system and user prompts, the output JSON schema, and validator errors when it is a repair attempt."""
+
     packet: ExplanationPacket
     system_prompt: str
     user_prompt: str
@@ -17,15 +19,20 @@ class ExplainRequest(BaseModel):
 
 
 class LLMResult(BaseModel):
+    """A model reply: its text, latency, and the model that produced it."""
+
     content: str
     latency_ms: int
     model: str
 
 
 class LLMProvider(Protocol):
+    """Interface every model provider implements."""
+
     id: str
 
-    def explain(self, request: ExplainRequest) -> LLMResult: ...
+    def explain(self, request: ExplainRequest) -> LLMResult:
+        """Send one request to the model and return its reply."""
 
 
 class LLMConfigError(RuntimeError):
