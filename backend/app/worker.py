@@ -128,7 +128,7 @@ def _run_job(session, job: AnalysisJob, settings, snapshot_source, comment_clien
     try:
         if job.phase == "explain":
             chosen = provider if provider is not None else _provider_or_failure(settings)
-            execute_explain(session, run.id, job.depth or "quick", chosen, settings, comment_client)
+            execute_explain(session, run.id, chosen, settings, comment_client)
             return
         if job.phase == "comment":
             execute_comment(session, run.id, settings, comment_client)
@@ -143,11 +143,9 @@ def _comment_client_for(settings: Settings, run: AnalysisRun, job: AnalysisJob, 
     """Use the injected client, or open an installation client for the PR comment.
 
     Tests pass a client. The worker process does not, which used to skip the
-    comment after a successful Quick explanation.
+    comment after a successful explanation.
     """
-    needs_comment = job.phase == "comment" or (
-        job.phase == "explain" and (job.depth or "quick") == "quick"
-    )
+    needs_comment = job.phase in {"comment", "explain"}
     if not needs_comment or comment_client is not None:
         return comment_client, None
     installation_id = run.revision.pull_request.repository.installation_id

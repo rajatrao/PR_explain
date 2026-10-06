@@ -14,11 +14,9 @@ from app.llm.provider import ExplainRequest, ExplanationCallError, LLMConfigErro
 def _request() -> ExplainRequest:
     packet = ExplanationPacket(
         revision=RevisionRef(repository="acme/app", pr_number=1, head_sha="b" * 40, base_sha="a" * 40),
-        depth="developer",
     )
     return ExplainRequest(
         packet=packet,
-        depth="developer",
         system_prompt="system",
         user_prompt="user",
         json_schema=ExplanationDocument.model_json_schema(),
@@ -103,7 +101,6 @@ def test_openai_missing_setting_does_not_call_ollama(monkeypatch, field, env_nam
 def test_openai_sends_packet_prompt_and_parses_json():
     packet = ExplanationPacket(
         revision=RevisionRef(repository="acme/app", pr_number=1, head_sha="b" * 40, base_sha="a" * 40),
-        depth="developer",
         claims=[
             ClaimRef(
                 id="c1",
@@ -140,7 +137,6 @@ def test_openai_sends_packet_prompt_and_parses_json():
     result = provider.explain(
         ExplainRequest(
             packet=packet,
-            depth="developer",
             system_prompt="system",
             user_prompt=user_prompt,
             json_schema=schema,

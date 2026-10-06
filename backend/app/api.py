@@ -10,7 +10,6 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -41,12 +40,7 @@ from app.logsetup import configure_logging
 
 logger = logging.getLogger(__name__)
 
-DEPTHS = ("quick", "deep")
 _DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-
-
-class DepthBody(BaseModel):
-    depth: str = Field(default="quick")
 
 
 @asynccontextmanager
@@ -136,23 +130,20 @@ def get_run(run_id: UUID, session: Session = Depends(get_db)) -> dict:
 @app.post("/api/runs/{run_id}/explanations")
 def retry_explanation(
     run_id: UUID,
-    body: DepthBody,
     session: Session = Depends(get_db),
 ) -> dict:
-    if body.depth not in DEPTHS:
-        raise HTTPException(status_code=422, detail="unknown depth")
     run = session.get(AnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     if run.analysis_status != "succeeded":
         raise HTTPException(status_code=409, detail="analysis has not succeeded")
     _ensure_stored_repository(session, run)
-    enqueue_job(session, run.id, "explain", body.depth)
-    if body.depth == "quick" and run.explanation_status != "succeeded":
+    enqueue_job(session, run.id, "explain")
+    if run.explanation_status != "succeeded":
         run.explanation_status = "queued"
         run.explanation_error = None
     session.commit()
-    return {"status": "queued", "depth": body.depth, "run_id": str(run.id)}
+    return {"status": "queued", "run_id": str(run.id)}
 
 
 @app.post("/api/runs/{run_id}/retry")
@@ -180,7 +171,7 @@ def retry_comment(run_id: UUID, session: Session = Depends(get_db)) -> dict:
     if run.analysis_status != "succeeded":
         raise HTTPException(status_code=409, detail="analysis has not succeeded")
     _ensure_stored_repository(session, run)
-    enqueue_job(session, run.id, "comment", None)
+    enqueue_job(session, run.id, "comment")
     session.commit()
     return {"status": "queued", "run_id": str(run.id)}
 
@@ -288,17 +279,18 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
     for claim in run.claims:
         if claim.kind == "file_changed" and claim.subject:
             files[claim.subject] = True
-    explanations = {
-        row.depth: {
-            "depth": row.depth,
-            "status": row.status,
-            "provider": row.provider,
-            "model": row.model,
-            "error": row.error,
-            "document": row.document,
+    stored = next(iter(run.explanations), None)
+    explanation = (
+        None
+        if stored is None
+        else {
+            "status": stored.status,
+            "provider": stored.provider,
+            "model": stored.model,
+            "error": stored.error,
+            "document": stored.document,
         }
-        for row in run.explanations
-    }
+    )
     delta = session.scalars(
         select(RevisionDelta).where(RevisionDelta.revision_id == revision.id)
     ).first()
@@ -380,7 +372,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             }
             for row in run.evidences
         ],
-        "explanations": _with_depth_documents(session, run, map_stored_explanations(explanations)),
+        "explanation": _with_document(session, run, explanation),
         "delta": None
         if delta is None
         else {
@@ -390,7 +382,6 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             "unchanged_count": delta.unchanged_count,
         },
         "events": _events(session, run),
-        "depths": list(DEPTHS),
         "change_flow_diagram": _with_review_diagram(
             build_change_flow(
                 run.symbols,
@@ -402,8 +393,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
         ),
         "explain_bullets": explain_bullets(run.claims, run.symbols),
         "behavioral_changes": build_behavioral_section(
-            narrative=_quick_field(explanations, "behavioral_changes"),
-            reasons=_quick_screening(explanations),
+            narrative=None,
             facts=(
                 behavior_facts := build_behavior_facts(
                     symbols=run.symbols,
@@ -430,16 +420,15 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             ),
         ),
         "impact": build_impact_section(
-            narrative=_quick_field(explanations, "impact"),
+            narrative=None,
             behavior_facts=behavior_facts,
             impact_facts=build_impact_facts(claims=run.claims, evidences=run.evidences, behavior_facts=behavior_facts),
             prescreened=True,
-            reasons=_quick_screening(explanations, "impact_screening"),
             surfaces=surfaces,
             system=system,
         ),
         "changes": build_file_changes(run.evidences, run.claims, (patches := _patches_for_run(run))),
-        "review": _review_for_run(explanations, run, repository.full_name, revision.head_sha, patches),
+        "review": _review_for_run(explanation, run, repository.full_name, revision.head_sha, patches),
         "details": build_details(
             symbols=run.symbols,
             relationships=run.relationships_,
@@ -448,19 +437,19 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             sections=build_change_flow(run.symbols, run.relationships_, run.evidences)["sections"],
             repo=repository.full_name,
             sha=revision.head_sha,
-            document_unknowns=_document_texts(explanations, "unknowns"),
-            review_questions=_document_texts(explanations, "review_questions"),
+            document_unknowns=_document_texts(explanation, "unknowns"),
+            review_questions=_document_texts(explanation, "review_questions"),
         ),
     }
 
 
-def _review_for_run(explanations: dict, run: AnalysisRun, repo: str, sha: str, patches: dict[str, str]) -> dict:
+def _review_for_run(explanation: dict | None, run: AnalysisRun, repo: str, sha: str, patches: dict[str, str]) -> dict:
     """The stored review (rules plus the screened model review), or the rule review for older runs."""
     from types import SimpleNamespace
 
     from app.explanation.review_report import build_review, stored_review
 
-    stored = _quick_field(explanations, "review")
+    stored = _explanation_field(explanation, "review")
     facts = SimpleNamespace(symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences)
     if stored:
         try:
@@ -494,35 +483,19 @@ def _with_review_diagram(story: dict, run: AnalysisRun) -> dict:
     return {**story, "mermaid": review or story.get("mermaid", ""), "legend": REVIEW_DIAGRAM_LEGEND if review else ""}
 
 
-def _quick_field(explanations: dict, field: str) -> dict | None:
-    """A screened narrative (behavioral_changes or impact) stored with a succeeded Quick explanation."""
-    quick = explanations.get("quick") or {}
-    document = quick.get("document") if quick.get("status") == "succeeded" else None
+def _explanation_field(explanation: dict | None, field: str) -> dict | None:
+    """A field (such as the stored review) of the run's succeeded explanation."""
+    explanation = explanation or {}
+    document = explanation.get("document") if explanation.get("status") == "succeeded" else None
     if not isinstance(document, dict):
         return None
     value = document.get(field)
     return value if isinstance(value, dict) else None
 
 
-def _quick_screening(explanations: dict, field: str = "behavior_screening") -> list[str]:
-    """Why a narrative (behavioral changes or impact) is missing: stored screening reasons, or the Quick status."""
-    quick = explanations.get("quick") or {}
-    status = quick.get("status")
-    if status != "succeeded":
-        if status in {"queued", "running"}:
-            return ["the explanation step is still running"]
-        if status == "failed":
-            return ["the explanation step failed" + (f" ({quick.get('error')})" if quick.get("error") else "")]
-        return ["the explanation step has not run for this commit"]
-    document = quick.get("document") if isinstance(quick.get("document"), dict) else {}
-    if field not in document:
-        return ["this commit was explained before this summary existed; run the explanation again"]
-    return [str(item) for item in document.get(field) or []]
-
-
-def _document_texts(explanations: dict, field: str) -> list[str]:
-    deep = explanations.get("deep") or {}
-    document = deep.get("document") if deep.get("status") == "succeeded" else None
+def _document_texts(explanation: dict | None, field: str) -> list[str]:
+    explanation = explanation or {}
+    document = explanation.get("document") if explanation.get("status") == "succeeded" else None
     if not isinstance(document, dict):
         return []
     texts: list[str] = []
@@ -533,35 +506,15 @@ def _document_texts(explanations: dict, field: str) -> list[str]:
     return texts
 
 
-def map_stored_explanations(stored: dict) -> dict:
-    """Return Quick and Deep. A new deep row wins; an older developer row fills Deep until then."""
-    visible: dict = {}
-    quick = stored.get("quick")
-    if quick:
-        visible["quick"] = {**quick, "depth": "quick"}
-    deep = stored.get("deep")
-    developer = stored.get("developer")
-    chosen = None
-    if deep and deep.get("document") and deep.get("status") == "succeeded":
-        chosen = deep
-    elif developer and developer.get("document"):
-        chosen = developer
-    elif deep:
-        chosen = deep
-    if chosen is not None:
-        visible["deep"] = {**chosen, "depth": "deep"}
-    return visible
-
-
-def _with_depth_documents(session: Session, run: AnalysisRun, explanations: dict) -> dict:
-    """Fill Quick and Deep from the analysis. Leave a stored developer body when Deep cannot be built."""
-    if run.analysis_status != "succeeded":
-        return explanations
+def _with_document(session: Session, run: AnalysisRun, explanation: dict | None) -> dict | None:
+    """Fill the explanation document from the analysis when none is stored yet."""
+    if run.analysis_status != "succeeded" or (explanation and explanation.get("document")):
+        return explanation
     try:
         result = load_result(session, run)
     except Exception:
-        logger.exception("depth documents were left unchanged")
-        return explanations
+        logger.exception("the explanation document was left unchanged")
+        return explanation
     revision = run.revision
     snapshot = Snapshot(
         repository=revision.pull_request.repository.full_name,
@@ -573,28 +526,14 @@ def _with_depth_documents(session: Session, run: AnalysisRun, explanations: dict
         pr_title=revision.title,
         pr_body=revision.body,
     )
-    budget = _settings.explanation_packet_char_budget
-    for depth in DEPTHS:
-        packet = build_packet(result, snapshot, depth, budget)  # type: ignore[arg-type]
-        composed = compose_document(packet)
-        checked = validate_response(composed.model_dump_json(), packet)
-        if not checked.ok or checked.document is None or not checked.document.statements():
-            continue
-        payload = checked.document.model_dump(mode="json")
-        current = explanations.get(depth)
-        if current is None:
-            explanations[depth] = {
-                "depth": depth,
-                "status": "succeeded",
-                "provider": None,
-                "model": None,
-                "error": None,
-                "document": payload,
-            }
-            continue
-        if current.get("status") == "succeeded":
-            current["document"] = payload
-    return explanations
+    packet = build_packet(result, snapshot, _settings.explanation_packet_char_budget)
+    checked = validate_response(compose_document(packet).model_dump_json(), packet)
+    if not checked.ok or checked.document is None or not checked.document.statements():
+        return explanation
+    payload = checked.document.model_dump(mode="json")
+    if explanation is None:
+        return {"status": "succeeded", "provider": None, "model": None, "error": None, "document": payload}
+    return {**explanation, "document": payload} if explanation.get("status") == "succeeded" else explanation
 
 
 def _events(session: Session, run: AnalysisRun) -> list[dict]:

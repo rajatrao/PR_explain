@@ -124,20 +124,15 @@ export type RunDetail = {
   relationships: { id: string; type: string; source: string; target: string; source_file: string | null }[];
   claims: Claim[];
   evidence: Evidence[];
-  explanations: Record<
-    string,
-    {
-      depth: string;
-      status: string;
-      provider: string | null;
-      model: string | null;
-      error: string | null;
-      document: ExplanationDocument | null;
-    }
-  >;
+  explanation: {
+    status: string;
+    provider: string | null;
+    model: string | null;
+    error: string | null;
+    document: ExplanationDocument | null;
+  } | null;
   delta: Delta | null;
   events: RunEvent[];
-  depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
   behavioral_changes?: BehavioralChanges;

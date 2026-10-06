@@ -445,7 +445,7 @@ def test_api_explanation_and_comment_recreate_missing_installation(db):
     _drop_installation(db, 810)
     _drop_installation(db, 820)
 
-    explained = client.post(f"/api/runs/{explain_run.id}/explanations", json={"depth": "quick"})
+    explained = client.post(f"/api/runs/{explain_run.id}/explanations")
     commented = client.post(f"/api/runs/{comment_run.id}/comment")
     assert explained.status_code == 200
     assert explained.json()["status"] == "queued"

@@ -1,1 +1,0 @@
-Name each changed function, the direct callers and calls stored in the packet, the tests or missing tests, and the file-reason claims. Put functions and calls in change_flow, tests in tests, and absent-file reasons in unchanged. Do not write an architecture overview and do not invent callers.

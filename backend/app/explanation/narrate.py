@@ -1,7 +1,7 @@
 """Wording for the two views from one packet.
 
 Selection already happened in the packet. This module only arranges those
-claims, relationships, and evidence into the Quick or Deep document.
+claims, relationships, and evidence into the explanation document.
 It does not add files, callers, or edges that the packet does not contain.
 """
 
@@ -17,16 +17,8 @@ from app.explanation.explain_view import (
 )
 from app.explanation.schema import ExplanationDocument, ExplanationPacket, Statement
 
-_DEVELOPER_FLOW = {"symbol_changed", "calls"}
-_DEVELOPER_TESTS = {"tests", "missing_test"}
-_DEVELOPER_REASONS = {"file_reason", "reaches_changed", "behavior_unchanged"}
-_DEVELOPER_DEPENDENCIES = {"dependency_changed", "dependency"}
-
-
 def compose_document(packet: ExplanationPacket) -> ExplanationDocument:
-    if packet.depth == "quick":
-        return _quick(packet)
-    return _deep(packet)
+    return _summary_document(packet)
 
 
 def explain_bullets(claims, symbols=None) -> list[str]:
@@ -83,7 +75,7 @@ def explain_bullets(claims, symbols=None) -> list[str]:
     return [item for item in bullets if item]
 
 
-def _quick(packet: ExplanationPacket) -> ExplanationDocument:
+def _summary_document(packet: ExplanationPacket) -> ExplanationDocument:
     changed = _kinds(packet, {"symbol_changed"})
     summary = " ".join(explain_bullets(packet.claims, packet.symbols))
     anchor = _statement_from_claims(changed[:4] or _kinds(packet, {"file_changed"})[:1] or packet.claims[:1], packet)
@@ -93,10 +85,23 @@ def _quick(packet: ExplanationPacket) -> ExplanationDocument:
     )
 
 
-def _deep(packet: ExplanationPacket) -> ExplanationDocument:
-    flow = [_located_statement(claim, packet) for claim in _kinds(packet, _DEVELOPER_FLOW)]
+
+
+_FLOW_KINDS = {"symbol_changed", "calls"}
+_TEST_KINDS = {"tests", "missing_test"}
+_REASON_KINDS = {"file_reason", "reaches_changed", "behavior_unchanged"}
+_DEPENDENCY_KINDS = {"dependency_changed", "dependency"}
+
+
+def compose_full_document(packet: ExplanationPacket) -> ExplanationDocument:
+    """A document that states every claim in the packet, with callers and locations.
+
+    Used by the scripted provider (tests, local seed) and as the benchmark's reference answer;
+    the app's own explanation uses ``compose_document``.
+    """
+    flow = [_located_statement(claim, packet) for claim in _kinds(packet, _FLOW_KINDS)]
     flow.extend(_edge_statements(packet, types={"CALLS", "IMPORTS", "TESTS"}, limit_to_changed=True))
-    reasons = _kinds(packet, _DEVELOPER_REASONS)
+    reasons = _kinds(packet, _REASON_KINDS)
     covered = {claim.subject for claim in reasons if claim.subject}
     bare_absent = [
         claim
@@ -112,11 +117,8 @@ def _deep(packet: ExplanationPacket) -> ExplanationDocument:
         important_changes=[
             _located_statement(claim, packet) for claim in _kinds(packet, {"defines_api"})
         ],
-        impacts=[
-            _located_statement(claim, packet)
-            for claim in _kinds(packet, _DEVELOPER_DEPENDENCIES)
-        ],
-        tests=[_located_statement(claim, packet) for claim in _kinds(packet, _DEVELOPER_TESTS)],
+        impacts=[_located_statement(claim, packet) for claim in _kinds(packet, _DEPENDENCY_KINDS)],
+        tests=[_located_statement(claim, packet) for claim in _kinds(packet, _TEST_KINDS)],
         unchanged=[_located_statement(claim, packet) for claim in [*reasons, *bare_absent]],
         unknowns=[
             _statement_from_claim(claim, packet)

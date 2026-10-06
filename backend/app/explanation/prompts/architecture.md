@@ -1,1 +1,0 @@
-State exported APIs and dependency facts that are claims in the packet. State database, schema, and external-system facts only when a claim says so. When those claims are absent, copy the UNKNOWN boundary statements already in the packet. Do not describe functions, callers, or files that are not an API or dependency claim.

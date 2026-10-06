@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.explanation.schema import ExplanationDepth, ExplanationDocument, ExplanationPacket
+from app.explanation.schema import ExplanationDocument, ExplanationPacket
 
 PROMPT_VERSION = "v14"
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -24,8 +24,8 @@ def system_prompt() -> str:
     return (_PROMPTS / "system.md").read_text(encoding="utf-8").strip()
 
 
-def depth_task(depth: ExplanationDepth) -> str:
-    return (_PROMPTS / f"{depth}.md").read_text(encoding="utf-8").strip()
+def task() -> str:
+    return (_PROMPTS / "explain.md").read_text(encoding="utf-8").strip()
 
 
 def build_user_message(
@@ -54,7 +54,7 @@ def build_user_message(
         },
         "BEHAVIOR FACTS": [item.model_dump() for item in packet.behavior_facts],
         "IMPACT FACTS": [item.model_dump() for item in packet.impact_facts],
-        "TASK": depth_task(packet.depth),
+        "TASK": task(),
         "OUTPUT SCHEMA": ExplanationDocument.model_json_schema(),
     }
     parts = [f"{name}\n{json.dumps(blocks[name], indent=2)}" for name in _BLOCKS]

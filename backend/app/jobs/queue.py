@@ -20,19 +20,15 @@ def enqueue_job(
     session: Session,
     run_id: uuid.UUID,
     phase: str,
-    depth: str | None = None,
 ) -> AnalysisJob:
     job = AnalysisJob(
         run_id=run_id,
         phase=phase,
-        depth=depth,
         status="queued",
         available_at=datetime.now(timezone.utc),
     )
     session.add(job)
     detail = {"phase": phase}
-    if depth:
-        detail["depth"] = depth
     record_event(
         session,
         stage="job_queued",
@@ -67,8 +63,7 @@ def requeue_failed_job(session: Session, run: AnalysisRun) -> AnalysisJob:
         raise RetryNotAvailable("job is already queued")
     created = job is None
     if created:
-        depth = "quick" if phase == "explain" else None
-        job = enqueue_job(session, run.id, phase, depth)
+        job = enqueue_job(session, run.id, phase)
     job.status = "pending"
     job.last_error = None
     job.locked_at = None

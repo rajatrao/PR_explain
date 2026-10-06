@@ -180,17 +180,13 @@ def claims_from_run(session: Session, run: AnalysisRun) -> list[Claim]:
 
 def save_packet(session: Session, run: AnalysisRun, packet: ExplanationPacket) -> ExplanationPacketRow:
     row = session.scalars(
-        select(ExplanationPacketRow).where(
-            ExplanationPacketRow.run_id == run.id,
-            ExplanationPacketRow.depth == packet.depth,
-        )
+        select(ExplanationPacketRow).where(ExplanationPacketRow.run_id == run.id)
     ).first()
     payload = packet.model_dump(mode="json")
     notes = [note.model_dump() for note in packet.context_notes]
     if row is None:
         row = ExplanationPacketRow(
             run_id=run.id,
-            depth=packet.depth,
             payload=payload,
             selection_notes=notes,
         )

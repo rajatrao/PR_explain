@@ -12,8 +12,7 @@ from app.config import Settings
 from app.db.models import AnalysisRun, ExplanationRow, PullRequest
 from app.explanation.assemble import PROMPT_VERSION, build_user_message, system_prompt
 from app.explanation.behavior_facts import build_behavior_facts
-from app.explanation.behavioral_changes import screen_narrative
-from app.explanation.impact import build_impact_facts, screen_impact
+from app.explanation.impact import build_impact_facts
 from app.explanation.review_diagram import build_review_diagram
 from app.explanation.review_report import build_review
 from app.explanation.narrate import compose_document, explain_bullets
@@ -26,7 +25,7 @@ from app.github.patches import fetch_compare_patches
 from app.jobs.events import record_event, restore_pipeline_events
 from app.jobs.queue import enqueue_job
 from app.jobs.store import load_result, persist_result, record_delta, save_packet
-from app.llm.provider import ExplainRequest, ExplanationCallError, LLMConfigError, LLMProvider
+from app.llm.provider import ExplainRequest, LLMProvider
 
 
 def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, settings: Settings) -> None:
@@ -68,12 +67,7 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
             head_sha=head_sha,
             detail={"claim_count": len(result.claims)},
         )
-        packet = build_packet(
-            result,
-            snapshot,
-            "quick",
-            settings.explanation_packet_char_budget,
-        )
+        packet = build_packet(result, snapshot, settings.explanation_packet_char_budget)
         save_packet(session, run, packet)
         record_event(
             session,
@@ -82,14 +76,14 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
             message="Persisted the explanation packet",
             run_id=run.id,
             head_sha=head_sha,
-            detail={"depth": packet.depth, "claim_count": len(packet.claims)},
+            detail={"claim_count": len(packet.claims)},
         )
         record_delta(session, revision, result.claims)
         run.analysis_status = "succeeded"
         run.analysis_error = None
         run.explanation_status = "queued"
         run.comment_status = "pending"
-        enqueue_job(session, run.id, "explain", "quick")
+        enqueue_job(session, run.id, "explain")
         session.commit()
     except Exception as exc:
         session.rollback()
@@ -105,7 +99,6 @@ def execute_analyze(session: Session, run_id: uuid.UUID, snapshot: Snapshot, set
 def execute_explain(
     session: Session,
     run_id: uuid.UUID,
-    depth: str,
     provider: LLMProvider,
     settings: Settings,
     comment_client=None,
@@ -122,12 +115,11 @@ def execute_explain(
             message="Explanation failed",
             run_id=run.id,
             head_sha=head_sha,
-            detail={"depth": depth, "reason": "analysis_not_ready"},
+            detail={"reason": "analysis_not_ready"},
         )
         raise RuntimeError("explanation requires a succeeded analysis")
-    if depth == "quick":
-        run.explanation_status = "running"
-        run.explanation_error = None
+    run.explanation_status = "running"
+    run.explanation_error = None
     record_event(
         session,
         stage="explanation",
@@ -135,46 +127,27 @@ def execute_explain(
         message="Explanation started",
         run_id=run.id,
         head_sha=head_sha,
-        detail={"depth": depth},
     )
-    if depth == "quick":
-        session.commit()
-    packet = _packet_for_depth(session, run, depth, settings)
+    session.commit()
+    packet = _packet_for_run(session, run, settings)
     try:
-        validation, result = _generate(provider, packet, depth)
-    except (ExplanationCallError, LLMConfigError, OSError, ConnectionError) as exc:
-        _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
-        return
-    except Exception as exc:
-        _fail_explanation(session, run, depth, provider, str(exc), None, head_sha, type(exc).__name__)
+        validation, result = _generate(provider, packet)
+    except Exception as exc:  # provider, configuration, network, or unexpected failures
+        _fail_explanation(session, run, provider, str(exc), None, head_sha, type(exc).__name__)
         return
     if not validation.ok or validation.document is None:
         message = "; ".join(validation.errors) or "explanation failed validation"
-        _fail_explanation(session, run, depth, provider, message, validation.raw_text, head_sha, "validation")
+        _fail_explanation(session, run, provider, message, validation.raw_text, head_sha, "validation")
         return
-    document = _grounded_document(session, run, depth, settings) or validation.document
-    if depth == "quick":
-        # Read the narrative from the model's raw reply. The validated document may be the packet-built
-        # fallback (the quick prompt leaves statement arrays empty), which never carries a narrative.
-        # Keep it only after it is checked against the packet's behavior facts.
-        narrative = _raw_field(result.content, "behavioral_changes")
-        screening: list[str] = []
-        document.behavioral_changes = screen_narrative(narrative, packet.behavior_facts, screening)
-        document.behavior_screening = [] if document.behavioral_changes else screening[:8]
-        kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
-        impact_screening: list[str] = []
-        document.impact = screen_impact(
-            _raw_field(result.content, "impact"), packet.behavior_facts, packet.impact_facts, impact_screening
-        )
-        document.impact_screening = [] if document.impact else impact_screening[:8]
-        impact_kept = len(document.impact.areas) if document.impact else 0
-        review_screening: list[str] = []
-        document.review = _review(session, run, settings, provider, packet, review_screening)
-        document.review_screening = review_screening[:12]
+    document = _grounded_document(session, run, settings) or validation.document
+    # Behavioral Changes and Impact are written by rule from the stored facts when shown, so the
+    # explanation step only adds the Review tab's report.
+    review_screening: list[str] = []
+    document.review = _review(session, run, settings, provider, packet, review_screening)
+    document.review_screening = review_screening[:12]
     _store_explanation(
         session,
         run,
-        depth,
         status="succeeded",
         provider_id=provider.id,
         model=result.model,
@@ -182,10 +155,8 @@ def execute_explain(
         raw_response=result.content,
         error=None,
     )
-    if depth == "quick":
-        _store_deep_document(session, run, provider, settings)
-        run.explanation_status = "succeeded"
-        run.explanation_error = None
+    run.explanation_status = "succeeded"
+    run.explanation_error = None
     record_event(
         session,
         stage="explanation",
@@ -193,29 +164,10 @@ def execute_explain(
         message="Explanation succeeded",
         run_id=run.id,
         head_sha=run.revision.head_sha,
-        detail=(
-            {
-                "depth": depth,
-                "behavior_changes_kept": kept,
-                "behavior_screening": screening[:8],
-                "impact_areas_kept": impact_kept,
-                "impact_screening": impact_screening[:8],
-                "review_screening": review_screening[:8],
-            }
-            if depth == "quick"
-            else {"depth": depth}
-        ),
+        detail={"review_screening": review_screening[:8]},
     )
     session.commit()
-    if depth == "quick":
-        _sync_comment(
-            session,
-            run,
-            settings,
-            comment_client,
-            document=document,
-            failure=None,
-        )
+    _sync_comment(session, run, settings, comment_client, document=document, failure=None)
 
 
 def _review(session, run, settings: Settings, provider: LLMProvider, packet: ExplanationPacket, reasons: list[str]):
@@ -229,7 +181,7 @@ def _review(session, run, settings: Settings, provider: LLMProvider, packet: Exp
 
     def ask(system: str, user: str, schema: dict) -> str:
         request = ExplainRequest(
-            packet=packet, depth="quick", system_prompt=system, user_prompt=user, json_schema=schema
+            packet=packet, system_prompt=system, user_prompt=user, json_schema=schema
         )
         return provider.explain(request).content
 
@@ -257,38 +209,22 @@ def execute_comment(session: Session, run_id: uuid.UUID, settings: Settings, com
     if run.explanation_status != "succeeded":
         _skip_comment(session, run)
         return
-    row = _explanation_row(session, run.id, "quick")
+    row = _explanation_row(session, run.id)
     document = None
     if row is not None and row.status == "succeeded" and row.document:
         document = ExplanationDocument.model_validate(row.document)
     else:
-        document = _grounded_document(session, run, "quick", settings)
+        document = _grounded_document(session, run, settings)
     if document is None:
         _skip_comment(session, run)
         return
     _sync_comment(session, run, settings, comment_client, document=document, failure=None)
 
 
-def _store_deep_document(session: Session, run: AnalysisRun, provider: LLMProvider, settings: Settings) -> None:
-    """Store the detailed view beside Quick. Does not call the model again."""
-    document = _grounded_document(session, run, "deep", settings)
-    if document is None:
-        return
-    _store_explanation(
-        session,
-        run,
-        "deep",
-        status="succeeded",
-        provider_id=provider.id,
-        model=None,
-        document=document.model_dump(mode="json"),
-        raw_response=None,
-        error=None,
-    )
 
 
-def _grounded_document(session: Session, run: AnalysisRun, depth: str, settings: Settings):
-    """Depth document written from the analysis. Does not replace the stored packet."""
+def _grounded_document(session: Session, run: AnalysisRun, settings: Settings):
+    """Explanation document written from the analysis. Does not replace the stored packet."""
     result = load_result(session, run)
     revision = run.revision
     snapshot = Snapshot(
@@ -301,7 +237,7 @@ def _grounded_document(session: Session, run: AnalysisRun, depth: str, settings:
         pr_title=revision.title,
         pr_body=revision.body,
     )
-    packet = build_packet(result, snapshot, depth, settings.explanation_packet_char_budget)  # type: ignore[arg-type]
+    packet = build_packet(result, snapshot, settings.explanation_packet_char_budget)
     composed = compose_document(packet)
     checked = validate_response(composed.model_dump_json(), packet)
     if checked.ok and checked.document is not None and checked.document.statements():
@@ -309,18 +245,13 @@ def _grounded_document(session: Session, run: AnalysisRun, depth: str, settings:
     return None
 
 
-def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: Settings) -> ExplanationPacket:
+def _packet_for_run(session: Session, run: AnalysisRun, settings: Settings) -> ExplanationPacket:
     from app.db.models import ExplanationPacketRow
 
-    row = session.scalars(
-        select(ExplanationPacketRow).where(
-            ExplanationPacketRow.run_id == run.id,
-            ExplanationPacketRow.depth == depth,
-        )
-    ).first()
+    row = session.scalars(select(ExplanationPacketRow).where(ExplanationPacketRow.run_id == run.id)).first()
     if row is not None:
         packet = ExplanationPacket.model_validate(row.payload)
-        if depth == "quick" and not packet.behavior_facts:
+        if not packet.behavior_facts:
             # Packets stored before behavior facts existed: add them from the stored analysis.
             stored = load_result(session, run)
             packet.behavior_facts = build_behavior_facts(
@@ -329,7 +260,7 @@ def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: 
                 claims=stored.claims,
                 evidences=stored.evidences,
             )
-        if depth == "quick" and not packet.impact_facts:
+        if not packet.impact_facts:
             stored = load_result(session, run)
             packet.impact_facts = build_impact_facts(
                 claims=stored.claims, evidences=stored.evidences, behavior_facts=packet.behavior_facts
@@ -347,14 +278,14 @@ def _packet_for_depth(session: Session, run: AnalysisRun, depth: str, settings: 
         pr_title=revision.title,
         pr_body=revision.body,
     )
-    packet = build_packet(result, snapshot, depth, settings.explanation_packet_char_budget)  # type: ignore[arg-type]
+    packet = build_packet(result, snapshot, settings.explanation_packet_char_budget)
     save_packet(session, run, packet)
     session.commit()
     return packet
 
 
-def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
-    request = _request(packet, depth, None)
+def _generate(provider: LLMProvider, packet: ExplanationPacket):
+    request = _request(packet, None)
     result = provider.explain(request)
     validation = validate_response(result.content, packet)
     if _model_saved(validation):
@@ -365,7 +296,7 @@ def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
         kept = _packet_explanation(packet, validation, result.content)
         if kept is not None:
             return kept, result
-    repair = _request(packet, depth, validation.errors)
+    repair = _request(packet, validation.errors)
     repaired = provider.explain(repair)
     repaired_validation = validate_response(repaired.content, packet)
     if _model_saved(repaired_validation):
@@ -376,37 +307,6 @@ def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
     return repaired_validation, repaired
 
 
-def _retry_narratives(provider, packet, depth, document, screening: list[str], impact_screening: list[str]) -> None:
-    """Ask once more for Behavioral Changes and Impact when every item was dropped, telling the model
-    why. The retry is screened the same way; a failed call keeps what the first reply gave."""
-    errors: list[str] = []
-    if document.behavioral_changes is None and packet.behavior_facts:
-        errors += [f"behavioral_changes: {reason}" for reason in screening[:6]] or ["behavioral_changes was missing"]
-    if document.impact is None and packet.impact_facts:
-        errors += [f"impact: {reason}" for reason in impact_screening[:6]] or ["impact was missing"]
-    errors.append(
-        "Rewrite only the dropped sections. Cite the fact ids each item rests on, describe the same subject as "
-        "those facts, and use only numbers, quoted values, and failures that appear in them."
-    )
-    try:
-        retried = provider.explain(_request(packet, depth, errors))
-    except Exception as exc:  # the first reply stands
-        screening.append(f"retry failed: {type(exc).__name__}")
-        return
-    if document.behavioral_changes is None and packet.behavior_facts:
-        again: list[str] = []
-        document.behavioral_changes = screen_narrative(
-            _raw_field(retried.content, "behavioral_changes"), packet.behavior_facts, again
-        )
-        screening.extend(f"retry: {reason}" for reason in again)
-        document.behavior_screening = [] if document.behavioral_changes else screening[:8]
-    if document.impact is None and packet.impact_facts:
-        again = []
-        document.impact = screen_impact(
-            _raw_field(retried.content, "impact"), packet.behavior_facts, packet.impact_facts, again
-        )
-        impact_screening.extend(f"retry: {reason}" for reason in again)
-        document.impact_screening = [] if document.impact else impact_screening[:8]
 
 
 def _raw_field(content: str | None, field: str) -> dict | None:
@@ -457,19 +357,17 @@ def _summary_from_packet(packet: ExplanationPacket, document: ExplanationDocumen
     return " ".join(texts[:4])
 
 
-def _request(packet: ExplanationPacket, depth: str, errors: list[str] | None) -> ExplainRequest:
-    scoped = packet.model_copy(update={"depth": depth})
+def _request(packet: ExplanationPacket, errors: list[str] | None) -> ExplainRequest:
     return ExplainRequest(
-        packet=scoped,
-        depth=depth,  # type: ignore[arg-type]
+        packet=packet,
         system_prompt=system_prompt(),
-        user_prompt=build_user_message(scoped, repair_errors=errors),
+        user_prompt=build_user_message(packet, repair_errors=errors),
         json_schema=ExplanationDocument.model_json_schema(),
         repair_errors=errors,
     )
 
 
-def _fail_explanation(session, run, depth, provider, message, raw, head_sha, error_type, model=None) -> None:
+def _fail_explanation(session, run, provider, message, raw, head_sha, error_type, model=None) -> None:
     record_event(
         session,
         stage="explanation",
@@ -477,11 +375,10 @@ def _fail_explanation(session, run, depth, provider, message, raw, head_sha, err
         message="Explanation failed",
         run_id=run.id,
         head_sha=head_sha,
-        detail={"depth": depth, "error_type": error_type},
+        detail={"error_type": error_type},
     )
-    if depth == "quick":
-        _mark_comment_skipped(session, run, head_sha)
-    _mark_explanation_failed(session, run, depth, provider, message, raw, model)
+    _mark_comment_skipped(session, run, head_sha)
+    _mark_explanation_failed(session, run, provider, message, raw, model)
 
 
 def _mark_comment_skipped(session, run, head_sha) -> None:
@@ -503,11 +400,10 @@ def _skip_comment(session, run) -> None:
     session.commit()
 
 
-def _mark_explanation_failed(session, run, depth, provider, message, raw, model=None) -> None:
+def _mark_explanation_failed(session, run, provider, message, raw, model=None) -> None:
     _store_explanation(
         session,
         run,
-        depth,
         status="failed",
         provider_id=getattr(provider, "id", None),
         model=model,
@@ -515,16 +411,15 @@ def _mark_explanation_failed(session, run, depth, provider, message, raw, model=
         raw_response=raw,
         error=message[:2000],
     )
-    if depth == "quick":
-        run.explanation_status = "failed"
-        run.explanation_error = message[:2000]
+    run.explanation_status = "failed"
+    run.explanation_error = message[:2000]
     session.commit()
 
 
-def _store_explanation(session, run, depth, *, status, provider_id, model, document, raw_response, error) -> None:
-    row = _explanation_row(session, run.id, depth)
+def _store_explanation(session, run, *, status, provider_id, model, document, raw_response, error) -> None:
+    row = _explanation_row(session, run.id)
     if row is None:
-        row = ExplanationRow(run_id=run.id, depth=depth, status=status)
+        row = ExplanationRow(run_id=run.id, status=status)
         session.add(row)
     row.status = status
     row.provider = provider_id
@@ -535,10 +430,8 @@ def _store_explanation(session, run, depth, *, status, provider_id, model, docum
     row.error = error
 
 
-def _explanation_row(session, run_id, depth) -> ExplanationRow | None:
-    return session.scalars(
-        select(ExplanationRow).where(ExplanationRow.run_id == run_id, ExplanationRow.depth == depth)
-    ).first()
+def _explanation_row(session, run_id) -> ExplanationRow | None:
+    return session.scalars(select(ExplanationRow).where(ExplanationRow.run_id == run_id)).first()
 
 
 def _sync_comment(session, run, settings: Settings, comment_client, *, document, failure) -> None:
@@ -563,7 +456,7 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         head_sha=head_sha,
     )
     pull = revision.pull_request
-    packet_row = next((item for item in run.packets if item.depth == "quick"), None)
+    packet_row = next(iter(run.packets), None)
     evidence_by_id: dict[str, EvidenceRef] = {}
     if packet_row is not None:
         packet = ExplanationPacket.model_validate(packet_row.payload)
@@ -593,8 +486,8 @@ def _sync_comment(session, run, settings: Settings, comment_client, *, document,
         evidence=stored.evidences,
         symbols=stored.symbols,
         relationships=stored.relationships,
-        document_unknowns=None if failure else _deep_texts(session, run, "unknowns"),
-        review_questions=None if failure else _deep_texts(session, run, "review_questions"),
+        document_unknowns=None if failure else _document_texts(document, "unknowns"),
+        review_questions=None if failure else _document_texts(document, "review_questions"),
         patches=fetch_compare_patches(
             settings,
             pull.repository.full_name,
@@ -655,12 +548,10 @@ def _comment_failure_message(exc: Exception) -> str:
     return text[:2000]
 
 
-def _deep_texts(session, run, field: str) -> list[str]:
-    row = _explanation_row(session, run.id, "deep")
-    if row is None or row.status != "succeeded" or not row.document:
-        return []
+def _document_texts(document, field: str) -> list[str]:
+    data = document.model_dump(mode="json") if hasattr(document, "model_dump") else (document or {})
     texts: list[str] = []
-    for statement in row.document.get(field) or []:
+    for statement in data.get(field) or []:
         text = statement.get("text") if isinstance(statement, dict) else None
         if text and text not in texts:
             texts.append(text)

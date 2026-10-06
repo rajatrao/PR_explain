@@ -439,5 +439,5 @@ def _enqueue_pull_request(session: Session, payload: dict, delivery_id: str) -> 
     session.flush()
     _record_received(session, delivery_id, "pull_request", run.id, head_sha)
     _record_reported_agent(session, payload, delivery_id, run.id, head_sha)
-    enqueue_job(session, run.id, "analyze", None)
+    enqueue_job(session, run.id, "analyze")
     return {"status": "queued", "run_id": str(run.id)}

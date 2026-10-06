@@ -18,7 +18,6 @@ _DETAIL_KEYS = {
     "change_count",
     "changed_file_count",
     "claim_count",
-    "depth",
     "error_type",
     "evidence_count",
     "file_count",
