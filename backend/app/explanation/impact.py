@@ -428,7 +428,9 @@ def build_impact_section(
     del prescreened
     from app.explanation.plain_summary import impact_overview
 
-    chosen = screen_impact(narrative, behavior_facts, impact_facts, reasons) if narrative else None
+    # Nothing written by the model is shown (see build_behavioral_section): rule-written only.
+    del narrative, reasons
+    chosen = None
     # The overall summary and severity come from the rule findings, never from the model.
     severity, summary = impact_overview(behavior_facts, impact_facts, surfaces) if (impact_facts or surfaces) else ("low", "")
     if chosen is None or not chosen.areas:

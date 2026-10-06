@@ -231,15 +231,11 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
     assert any("named the function createSession" in r for r in reasons)
     assert any("named the function login" in r for r in reasons)
     assert any("REDIS_URL" in r for r in reasons)
+    # A model narrative is never shown, even when it passes screening: Impact is rule-written only.
     section = build_impact_section(narrative=kept, behavior_facts=[_charge(), _session()], impact_facts=facts, prescreened=True)
+    assert section["source"] == "rules"
     markdown = render_impact_markdown(section)
-    # The overall summary is written by rule; the model's areas follow it.
-    assert markdown.startswith("### Impact\n\nOverall impact: high.")
-    assert "<summary>By flow and interface" in markdown
-    assert "**Checkout failures** (high)" in markdown
-    assert "Worth checking" not in markdown
-    for name in ("createSession", "post_checkout", "charge("):
-        assert name not in markdown
+    assert "Checkout failures" not in markdown and "Written by the configured model" not in markdown
 
 
 def test_missing_impact_summary_falls_back_to_a_plain_summary():

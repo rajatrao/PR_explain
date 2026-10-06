@@ -168,12 +168,6 @@ def execute_explain(
         )
         document.impact_screening = [] if document.impact else impact_screening[:8]
         impact_kept = len(document.impact.areas) if document.impact else 0
-        if (document.behavioral_changes is None and packet.behavior_facts) or (
-            document.impact is None and packet.impact_facts
-        ):
-            _retry_narratives(provider, packet, depth, document, screening, impact_screening)
-            kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
-            impact_kept = len(document.impact.areas) if document.impact else 0
         review_screening: list[str] = []
         document.review = _review(session, run, settings, provider, packet, review_screening)
         document.review_screening = review_screening[:12]

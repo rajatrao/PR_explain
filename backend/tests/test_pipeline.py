@@ -164,7 +164,7 @@ def test_empty_statements_keep_packet_explanation(db):
     )
     db.expire_all()
     stored = db.get(AnalysisRun, run.id)
-    assert provider.calls == 3  # Explain, one retry for the missing narratives, then the Review tab
+    assert provider.calls == 2  # Explain, then the Review tab
     assert stored.analysis_status == "succeeded"
     assert stored.explanation_status == "succeeded"
     assert stored.explanation_error is None
@@ -625,16 +625,14 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     client = TestClient(app)
     body = client.get(f"/api/runs/{run.id}").json()
     section = body["behavioral_changes"]
-    assert section["source"] == "model"
-    assert [change["title"] for change in section["changes"]] == ["Session token format"]
+    # The model's narrative is never shown in Explain: both sections are written by rule from the facts.
+    assert section["source"] == "rules"
     posted = comments.bodies[-1]
-    assert "**Session token format**" in posted
+    assert "**Session token format**" not in posted
     assert "redisClient" not in posted
     impact = body["impact"]
-    assert impact["source"] == "model"
-    # Capped at the cited finding's severity (medium); the item naming a function is dropped.
-    assert [(a["title"], a["severity"]) for a in impact["areas"]] == [("Sign-in sessions", "medium")]
-    assert "**Sign-in sessions** (medium)" in posted
+    assert impact["source"] == "rules"
+    assert "Sign-in sessions" not in posted
     assert "`createSession` needs a TTL" not in posted
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
     assert "Old flow" not in posted
