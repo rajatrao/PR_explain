@@ -421,3 +421,14 @@ def test_retry_recovers_a_narrative_that_was_dropped():
         pipeline._request = original
     assert document.behavioral_changes is not None and document.behavioral_changes.changes
     assert any("Password resets" in error for error in provider.requests[0].errors)
+
+
+def test_overall_behavior_summary_is_flow_level_and_has_no_code():
+    from app.explanation.plain_summary import behavior_overview
+
+    surfaces = [{"level": "api", "change": "added", "name": "POST /api/refunds", "detail": "", "evidence": {"label": "a", "href": None}}]
+    text = behavior_overview(_facts(), surfaces)
+    assert text.startswith("This pull request changes how 1 flow behaves (post checkout), and adds 1 HTTP route.")
+    assert "Requests through post checkout now fail with a different error in some cases" in text
+    for code in ("`", "charge", "ValueError", "total", "_fee_for", "audit.record"):
+        assert code not in text, code

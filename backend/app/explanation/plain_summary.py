@@ -299,3 +299,143 @@ def rule_impact_areas(
         )
     areas.sort(key=lambda pair: pair[0])
     return [area for _, area in areas[:ITEM_CAP]]
+
+
+# --- overall summaries ---------------------------------------------------------------------------
+
+
+def _outcome(change: BehaviorChangeFact, fact: BehaviorFunctionFact) -> str | None:
+    """What requests experience after the change, with no step, code, or condition named."""
+    kind, before, after = change.kind, change.before, change.after
+    if kind == "removed_function":
+        return "lose a step that was removed"
+    if kind == "signature" and before and after:
+        from app.explanation.behavior_facts import param_delta
+
+        added, removed, defaults = param_delta(before, after, fact.file)
+        required = [name for name, optional in added if not optional]
+        if required:
+            n = len(required)
+            return f"need {n} more required input{'s' if n != 1 else ''}"
+        if removed:
+            return "must stop passing inputs that are no longer accepted"
+        if defaults:
+            return "get a different default when an input is left out"
+        return None
+    if kind == "error":
+        if before and after:
+            return "fail with a different error in some cases"
+        return "can now stop with an error where they used to continue" if after else "no longer fail in a case that used to fail"
+    if kind == "return":
+        if before and after:
+            return "get a different result"
+        return "can now end early where they used to continue" if after else "continue where they used to end early"
+    if kind == "condition":
+        return "take a different path for some inputs"
+    if kind == "call":
+        target = next(iter(call_names(after or before or "")), "")
+        what = humanize(target) if target else "another operation"
+        if after and not before:
+            return f"also trigger {what}"
+        if before and not after:
+            return f"no longer trigger {what}"
+        return None
+    if kind == "value":
+        return "use a different value at one point"
+    return None
+
+
+def _outcomes(members: list[BehaviorFunctionFact], cap: int = 3) -> list[str]:
+    out: list[str] = []
+    for fact in members:
+        for change in sorted(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9)):
+            phrase = _outcome(change, fact)
+            if phrase and phrase not in out:
+                out.append(phrase)
+            if len(out) >= cap:
+                return out
+    return out
+
+
+def _interface_phrases(surfaces: list[dict]) -> list[str]:
+    phrases: list[str] = []
+    for level, items in _by_level(surfaces):
+        verbs = {"added": "adds", "removed": "removes", "changed": "changes"}
+        counts: dict[str, int] = {}
+        for item in items:
+            counts[item["change"]] = counts.get(item["change"], 0) + 1
+        noun = {"api": "HTTP route", "data": "stored data definition", "config": "configuration setting",
+                "dependency": "dependency", "ui": "web interface file"}.get(level, "interface")
+        for change, n in counts.items():
+            phrases.append(f"{verbs.get(change, change)} {n} {noun}{'s' if n != 1 else ''}")
+    return phrases
+
+
+def _join_clauses(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def behavior_overview(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None) -> str:
+    """A short, plain summary of how the system behaves differently, from the PR's facts only."""
+    flows = [(entries, members) for entries, members in _flows(facts) if entries]
+    unreached = [members for entries, members in _flows(facts) if not entries]
+    interfaces = _interface_phrases(surfaces or [])
+    sentences: list[str] = []
+    if flows:
+        names = [humanize(name) for entries, _ in flows for name in entries]
+        count = len(set(names))
+        sentences.append(
+            f"This pull request changes how {count} flow{'s' if count != 1 else ''} behave{'s' if count == 1 else ''}"
+            f" ({_list(sorted(set(names)), 5)})" + (f", and {_join_clauses(interfaces)}." if interfaces else ".")
+        )
+        for entries, members in flows[:3]:
+            outcomes = _outcomes(members)
+            if outcomes:
+                subject = _list([humanize(name) for name in entries])
+                sentences.append(f"Requests through {subject} now {_join_clauses(outcomes)}.")
+    elif interfaces:
+        sentences.append(f"This pull request {_join_clauses(interfaces)}.")
+    if unreached:
+        n = sum(len(members) for members in unreached)
+        sentences.append(
+            f"{n} other changed part{'s' if n != 1 else ''} of the code {'are' if n != 1 else 'is'} not reached from any analyzed entry point."
+        )
+    return " ".join(sentences)
+
+
+def impact_overview(
+    behavior_facts: list[BehaviorFunctionFact], impact_facts: list[ImpactFact], surfaces: list[dict] | None = None
+) -> tuple[str, str]:
+    """(overall severity, a short plain summary of what the PR affects), from rule findings only."""
+    attention = [f for f in impact_facts if f.kind == "attention"]
+    levels = [f.severity or "low" for f in attention] + [
+        _surface_severity(level, items) for level, items in _by_level(surfaces or [])
+    ]
+    severity = min(levels, key=lambda s: _SEVERITY_RANK.get(s, 2), default="low")
+    flows = [(entries, members) for entries, members in _flows(behavior_facts) if entries]
+    sentences: list[str] = [f"Overall impact: {severity}."]
+    if flows:
+        names = sorted({humanize(name) for entries, _ in flows for name in entries})
+        sentences.append(
+            f"{len(names)} flow{'s' if len(names) != 1 else ''} reach the changed behavior ({_list(names, 5)})."
+        )
+    counts = {level: sum(1 for f in attention if (f.severity or "low") == level) for level in ("high", "medium")}
+    if attention:
+        parts = [f"{n} {level}" for level, n in counts.items() if n]
+        sentences.append(
+            f"The analysis found {len(attention)} finding{'s' if len(attention) != 1 else ''} that need{'s' if len(attention) == 1 else ''} attention"
+            + (f" ({', '.join(parts)})." if parts else ".")
+        )
+    untested = [members for entries, members in flows if all(not fact.tests for fact in members)]
+    if untested:
+        sentences.append(
+            "No test exercises the changed behavior." if len(untested) == len(flows) else "Some of these flows have no test for the changed behavior."
+        )
+    interfaces = _interface_phrases(surfaces or [])
+    if interfaces:
+        sentences.append(f"At the system level it {_join_clauses(interfaces)}.")
+    else:
+        sentences.append("The diff changes no HTTP route, stored data, configuration, or dependency.")
+    return severity, " ".join(sentences)

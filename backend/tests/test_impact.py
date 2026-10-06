@@ -233,10 +233,12 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
     assert any("REDIS_URL" in r for r in reasons)
     section = build_impact_section(narrative=kept, behavior_facts=[_charge(), _session()], impact_facts=facts, prescreened=True)
     markdown = render_impact_markdown(section)
-    assert markdown.startswith("### Impact\n\nCheckout and sign-in both behave differently")
+    # The overall summary is written by rule; the model's areas follow it.
+    assert markdown.startswith("### Impact\n\nOverall impact: high.")
+    assert "<summary>By flow and interface" in markdown
     assert "**Checkout failures** (high)" in markdown
     assert "Worth checking" not in markdown
-    for name in ("createSession", "post_checkout", "charge(", "login"):
+    for name in ("createSession", "post_checkout", "charge("):
         assert name not in markdown
 
 
@@ -266,3 +268,14 @@ def test_impact_area_about_something_the_facts_never_mention_is_dropped():
     reasons: list[str] = []
     assert screen_impact(narrative, [_charge(), _session()], facts, reasons) is None
     assert any("shares no subject" in reason or "not in the cited facts" in reason for reason in reasons), reasons
+
+
+def test_overall_impact_summary_rests_on_rule_findings_only():
+    facts = _summary_facts()
+    section = build_impact_section(narrative=None, behavior_facts=[_charge(), _session()], impact_facts=facts)
+    assert section["severity"] == "high"
+    overview = section["overview"]
+    assert overview.startswith("Overall impact: high. 4 flows reach the changed behavior")
+    assert "The diff changes no HTTP route, stored data, configuration, or dependency." in overview
+    for code in ("`", "createSession", "post_checkout", "ttlMs", ".py"):
+        assert code not in overview, code
