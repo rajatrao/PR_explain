@@ -378,6 +378,8 @@ def screen_impact(
                     break
         if issue is None and grounding.off_topic([note.title, note.summary, note.who_notices], note.fact_ids):
             issue = "shares no subject with the facts it cites"
+        if issue is None:
+            issue = grounding.unsupported_claim(" ".join([note.title, note.summary, note.who_notices or ""]), note.fact_ids)
         if issue:
             log.append(f"dropped '{note.title[:40]}': {issue}")
             continue
@@ -395,7 +397,14 @@ def screen_impact(
 
     overview = narrative.overview.strip()
     everything = grounding.scope([fact.id for fact in impact_facts]) or ""
-    if overview and problem(overview, everything):
+    # The overview may only summarize the kept areas: it is checked against their facts alone.
+    kept_ids = [fact_id for area in areas for fact_id in area.fact_ids]
+    if overview and (
+        problem(overview, everything)
+        or grounding.off_topic([overview], kept_ids)
+        or grounding.unsupported_claim(overview, kept_ids)
+    ):
+        log.append("dropped the overview: it goes beyond the kept areas")
         overview = ""
     return ImpactNarrative(overview=overview, areas=areas)
 

@@ -76,6 +76,33 @@ _FAILURE_EVIDENCE = re.compile(
     r"status|\b[45]\d\d\b|return None|return null|return false|return -1",
     re.IGNORECASE,
 )
+# Areas a reviewer reads as a claim about the system. Naming one requires a cited fact about it:
+# a PR that touches no session code must not be summarized as "session handling".
+_DOMAIN = {
+    "auth": (r"auth\b", "authent", "authoriz", "oauth", "login", "logout", "signin", "sign-in", "credential", "password"),
+    "session": ("session", "cookie"),
+    "token": ("token", "jwt"),
+    "timeout": ("timeout", "time-out", "expir", "ttl"),
+    "permission": ("permission", "role", "admin", "privilege", "access control"),
+    "security": ("secur", "encrypt", "privacy", "vulnerab", "attack"),
+    "payment": ("payment", "billing", "invoice"),
+    "database": ("database", "migration"),
+    "cache": ("cache", "caching"),
+    "validation": ("validat", "sanitiz"),
+    "rate limit": ("rate limit", "rate-limit", "throttl"),
+    "notification": ("email", "notification", "webhook"),
+}
+# Evaluations of quality or intent. The facts are statements from the diff; they never show that a
+# change is safer, faster, or better, so these are dropped unless a cited fact uses the same word.
+_JUDGMENT = re.compile(
+    r"\b(?:strong(?:er|est)|weak(?:er|est)|safer|secure(?:ly)?|security|improv(?:e|es|ed|ing|ement|ements)|better|worse|"
+    r"responsive(?:ness)?|performan(?:t|ce)|faster|slower|efficien(?:t|cy)|robust(?:ness)?|reliab(?:le|ility)|"
+    r"best practices?|ensur(?:e|es|ed|ing)|guarantee(?:s|d)?|protect(?:s|ed|ion)?|harden(?:s|ed|ing)?|"
+    r"intend(?:s|ed)|aims? to|designed to|cleaner|simpler|maintainab(?:le|ility))\b",
+    re.IGNORECASE,
+)
+
+
 # Words that say nothing about what changed, so they never count as shared topic.
 _STOP = {
     "previously", "handled", "handle", "handles", "change", "changes", "changed", "with", "this", "that", "they",
@@ -238,6 +265,10 @@ def screen_narrative(
                 break
         if issue is None and grounding.off_topic([change.title, change.before, change.after, change.impact], change.fact_ids):
             issue = "shares no subject with the facts it cites"
+        if issue is None:
+            issue = grounding.unsupported_claim(
+                " ".join([change.title, change.before, change.after, change.impact or ""]), change.fact_ids
+            )
         if issue:
             log.append(f"dropped '{change.title[:40]}': {issue}")
             continue
@@ -255,6 +286,7 @@ def screen_narrative(
         if (
             problem(note.text, allowed, may_name_entries=True, entries=grounding.entries_for(note.fact_ids)) is None
             and not grounding.off_topic([note.text], note.fact_ids)
+            and grounding.unsupported_claim(note.text, note.fact_ids) is None
         ):
             watch.append(note)
         if len(watch) >= WATCH_CAP:
@@ -262,7 +294,14 @@ def screen_narrative(
 
     overview = narrative.overview.strip()
     everything = scope(list(by_change)) or ""
-    if overview and problem(overview, everything, may_name_entries=True):
+    # The overview may only summarize the kept changes: it is checked against their facts alone.
+    kept_ids = [fact_id for change in kept for fact_id in change.fact_ids]
+    if overview and (
+        problem(overview, everything, may_name_entries=True)
+        or grounding.off_topic([overview], kept_ids)
+        or grounding.unsupported_claim(overview, kept_ids)
+    ):
+        log.append("dropped the overview: it goes beyond the kept changes")
         overview = ""
     return BehavioralNarrative(overview=overview, changes=kept, watch=watch)
 
@@ -305,6 +344,19 @@ class Grounding:
                 chunks.extend([fact.function, fact.file, *fact.callers_at_head, *fact.tests])
                 chunks.extend(self._behavior_chunks(behavior_id))
         return "\n".join(chunk for chunk in chunks if chunk)
+
+    def unsupported_claim(self, text: str, ids: list[str]) -> str | None:
+        """A system area or a quality judgment the cited facts do not show."""
+        topic = self.topic_text(ids).casefold()
+        lowered = (text or "").casefold()
+        judged = _JUDGMENT.search(text or "")
+        if judged and judged.group(0).casefold() not in topic:
+            return f'judged the change ("{judged.group(0)}"), which the facts cannot show'
+        for area, stems in _DOMAIN.items():
+            said = next((stem for stem in stems if re.search(rf"\b{stem}", lowered)), None)
+            if said and not any(re.search(stem.replace(r"\b", ""), topic) for stem in stems):
+                return f'mentioned {area} ("{said.replace(chr(92) + "b", "")}…"), which no cited fact is about'
+        return None
 
     def off_topic(self, texts: list[str], ids: list[str]) -> bool:
         """True when none of the item's content words matches anything the cited facts are about.
