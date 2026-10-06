@@ -140,7 +140,6 @@ export type RunDetail = {
   depths: string[];
   change_flow_diagram: ChangeFlowDiagram;
   explain_bullets: string[];
-  behavior_flows?: BehaviorFlows;
   behavioral_changes?: BehavioralChanges;
   impact?: ImpactSummary;
   changes?: FileChange[];
@@ -171,11 +170,6 @@ export type BehavioralChanges = {
   watch: string[];
 };
 
-export type BehaviorFlows = {
-  before: string;
-  after: string;
-  legend: string;
-};
 
 export type ImpactSummary = {
   source: "model" | "none";

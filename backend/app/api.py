@@ -21,8 +21,6 @@ from app.db.models import AnalysisRun, PipelineEvent, PullRequest, Revision, Rev
 from app.db.session import get_db
 from app.explanation.changes import build_file_changes
 from app.github.patches import fetch_compare_patches
-from app.explanation.behavior_comparison import build_behavior_comparison
-from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
 from app.explanation.schema import ReviewReport
@@ -423,16 +421,6 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             impact_facts=build_impact_facts(claims=run.claims, evidences=run.evidences, behavior_facts=behavior_facts),
             prescreened=True,
             reasons=_quick_screening(explanations, "impact_screening"),
-        ),
-        "behavior_flows": build_behavior_flows(
-            build_behavior_comparison(
-                symbols=run.symbols,
-                relationships=run.relationships_,
-                claims=run.claims,
-                evidences=run.evidences,
-            ),
-            symbols=run.symbols,
-            relationships=run.relationships_,
         ),
         "changes": build_file_changes(run.evidences, run.claims, (patches := _patches_for_run(run))),
         "review": _review_for_run(explanations, run, repository.full_name, revision.head_sha, patches),

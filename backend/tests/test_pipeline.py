@@ -245,8 +245,7 @@ def test_new_sha_replaces_comment_body(db):
     explain_body, rest = latest.split("## Details for", 1)
     details_body, review_body = rest.split("## Review for", 1)
     assert "```mermaid" in explain_body
-    # The only diagrams in Details are the old and new flow diagrams, above Key Changes.
-    assert "```mermaid" not in details_body.split("### Old flow vs New flow", 1)[0]
+    assert "```mermaid" not in details_body
     assert "```mermaid" not in review_body
     assert "### Impact" not in details_body
     assert "| Area | Reason | Evidence file |" not in details_body
@@ -638,8 +637,7 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     assert "**Sign-in sessions** (medium)" in posted
     assert "`createSession` needs a TTL" not in posted
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
-    assert "### Old flow vs New flow" in details
-    assert "### Old flow vs New flow" not in posted.split("## Details for", 1)[0]
+    assert "Old flow" not in posted
     review = body["review"]
     assert review["source"] == "stored"
     assert review["attention"][0]["area"] == "Session lifetime at sign-in"

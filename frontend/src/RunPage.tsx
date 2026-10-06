@@ -2,7 +2,6 @@ import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject }
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
 import type {
-  BehaviorFlows,
   ChangeFlowDiagram,
   FileChange,
   RunDetail,
@@ -532,26 +531,6 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
   );
 }
 
-function BehaviorFlowsSection({ flows }: { flows?: BehaviorFlows }) {
-  if (!flows || (!flows.before && !flows.after)) return null;
-  return (
-    <section className="narrative behavior-flows">
-      <h3>Old flow vs New flow</h3>
-      {flows.legend ? <p className="kicker">{flows.legend}</p> : null}
-      <div className="flow-pair">
-        <div className="flow-side flow-before">
-          <h4>Old flow (base)</h4>
-          <MermaidDiagram chart={flows.before} label="Old flow diagram" emptyText="Nothing to draw for the base commit." />
-        </div>
-        <div className="flow-side flow-after">
-          <h4>New flow (head)</h4>
-          <MermaidDiagram chart={flows.after} label="New flow diagram" emptyText="The changed code is not present at the head commit." />
-        </div>
-      </div>
-    </section>
-  );
-}
-
 /** Render `code` spans inside a sentence without interpreting any other markup. */
 function InlineCode({ text }: { text: string }) {
   const parts = text.split(/(``\s.+?\s``|`[^`]+`)/g);
@@ -633,18 +612,14 @@ function DetailsView({ run }: { run: RunDetail }) {
   );
   const changes = run.changes ?? [];
   const hasWhatChanged = sections.some((section) => section.title === "What changed");
-  const hasKeyChanges = sections.some((section) => section.title === "Key Changes");
-  const flows = <BehaviorFlowsSection flows={run.behavior_flows} />;
   return (
     <section className="narrative">
-      {hasKeyChanges ? null : flows}
       {sections.length === 0 && changes.length === 0 ? (
         <p className="kicker">none found</p>
       ) : (
         <>
           {sections.map((section) => (
             <Fragment key={section.title}>
-              {section.title === "Key Changes" ? flows : null}
               <DetailGroup
                 title={section.title}
                 rows={section.rows}
