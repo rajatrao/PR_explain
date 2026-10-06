@@ -1,9 +1,11 @@
-"""Plain-language Behavioral Changes and Impact, written by rule from the PR's facts.
+"""Flow-level and system-level Behavioral Changes and Impact, written by rule from the PR's facts.
 
-Used when no model-written item passes the evidence checks, so the Explain tab is never empty and
-never shows code. Every sentence comes from a before/after fact in the diff or a rule finding; the
-wording names capabilities in plain words (``createSession`` reads as "create session"), never
-code, files, conditions, or call syntax. Each item keeps its evidence links.
+Used when no model-written item passes the evidence checks. Nothing is described per function.
+Instead the changed steps are grouped by the flows that reach them (the entry points from stored
+call edges at the head commit), and the system surfaces the analyzer found in the diff (HTTP
+routes, stored data, configuration, dependencies, web interface) are described as interface
+changes. Every sentence comes from a before/after fact, a surface finding, or a rule finding, and
+each item keeps its evidence links.
 """
 
 from __future__ import annotations
@@ -13,188 +15,285 @@ import re
 from app.analyzer.behavior import CATEGORY_ORDER, call_names
 from app.explanation.schema import BehaviorChangeFact, BehaviorFunctionFact, ImpactFact
 
-ITEM_CAP = 5
+ITEM_CAP = 6
 _SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
+# --- words ----------------------------------------------------------------------------------
+
+
 def humanize(name: str) -> str:
-    """createSession → "create session", render_combined_comment → "render combined comment"."""
-    tail = (name or "").rsplit(".", 1)[-1].strip("_")
-    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", tail)
+    """createSession → "create session", audit.record → "audit record"."""
+    text = (name or "").replace(".", "_").strip("_")
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
     spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
     words = [word.lower() for word in re.split(r"[_\s]+", spaced) if word]
-    return " ".join(words[:6]) or "this code"
+    return " ".join(words[:6]) or "this step"
 
 
-def _capability(name: str) -> str:
-    text = humanize(name)
-    return text[0].upper() + text[1:]
-
-
-def _people(names: list[str], cap: int = 4) -> str:
-    shown = [humanize(name) for name in names[:cap]]
-    if len(names) > cap:
-        shown.append(f"{len(names) - cap} more")
+def _list(items: list[str], cap: int = 4) -> str:
+    shown = list(dict.fromkeys(items))
+    extra = len(shown) - cap
+    shown = shown[:cap] + ([f"{extra} more"] if extra > 0 else [])
     if len(shown) <= 1:
         return "".join(shown)
     return ", ".join(shown[:-1]) + " and " + shown[-1]
 
 
-def describe(change: BehaviorChangeFact, fact: BehaviorFunctionFact) -> tuple[str, str] | None:
-    """Plain before/after sentences for one statement-level change, or None when it shows no outcome."""
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+# --- what a flow sees --------------------------------------------------------------------------
+
+
+def _flow_change(change: BehaviorChangeFact, fact: BehaviorFunctionFact) -> tuple[str, str] | None:
+    """(what the flow did before, what it does now) at one changed step, in flow terms."""
+    step = f"the {humanize(fact.function)} step"
     kind, before, after = change.kind, change.before, change.after
     if kind == "removed_function":
-        return "This capability existed.", "It was removed."
+        return f"used {step}", f"no longer have {step}, which is removed"
     if kind == "signature" and before and after:
         from app.explanation.behavior_facts import param_delta
 
         added, removed, defaults = param_delta(before, after, fact.file)
         required = [name for name, optional in added if not optional]
-        optional = [name for name, optional in added if optional]
         if required:
             n = len(required)
-            return "Callers supplied the inputs it needed.", f"Callers must now supply {n} more required input{'s' if n != 1 else ''}."
+            return f"supplied {step} the inputs it needed", f"must supply {n} more required input{'s' if n != 1 else ''} to {step}"
         if removed:
-            n = len(removed)
-            return f"It accepted {n} input{'s' if n != 1 else ''} it no longer takes.", "Callers that still pass them must change."
+            return f"could pass {step} inputs it no longer accepts", f"must stop passing those inputs to {step}"
         if defaults:
-            return "Callers that left an input out got its old default.", "They now get a different default."
-        if optional:
-            n = len(optional)
-            return "It took a fixed set of inputs.", f"It accepts {n} new optional input{'s' if n != 1 else ''}; existing calls keep working."
+            return f"got the old default at {step} when they left an input out", "get a different default there"
         return None
     if kind == "error":
         if before and after:
-            return "In one case it failed with one kind of error.", "In that case it now fails with a different error."
+            return f"failed with one kind of error at {step} in one case", "fail with a different error there"
         if after:
-            return "It carried on in one case.", "It now stops with an error in that case."
-        return "It stopped with an error in one case.", "It no longer fails in that case."
+            return f"carried on through {step} in one case", f"can stop with an error at {step} in that case"
+        return f"stopped with an error at {step} in one case", "carry on in that case"
     if kind == "return":
         if before and after:
-            return "It returned one result.", "It now returns a different result."
+            return f"got one result back from {step}", "get a different result back"
         if after:
-            return "It ran to the end in one case.", "It now returns early in that case."
-        return "It returned early in one case.", "It now carries on in that case."
+            return f"continued past {step} in one case", f"can end early at {step} in that case"
+        return f"ended early at {step} in one case", "continue in that case"
     if kind == "condition":
-        return "One rule decided which path it took.", "That rule changed, so some inputs now take a different path."
+        return f"followed one path through {step}", "take a different path through it for some inputs"
     if kind == "call":
+        target = next(iter(call_names(after or before or "")), "")
+        what = humanize(target) if target else "another operation"
         if after and not before:
-            targets = [humanize(name.replace(".", "_")) for name in call_names(after)][:1]
-            return "It did not trigger this step.", f"It now also triggers {targets[0] if targets else 'another step'}."
+            return f"did not trigger {what} at {step}", f"also trigger {what} there"
         if before and not after:
-            targets = [humanize(name.replace(".", "_")) for name in call_names(before)][:1]
-            return f"It triggered {targets[0] if targets else 'another step'}.", "It no longer does."
-        return "It triggered one step.", "It now triggers a different one."
+            return f"triggered {what} at {step}", f"no longer trigger {what}"
+        return f"triggered one operation at {step}", "trigger a different one"
     if kind == "value":
-        return "It worked with one value.", "It now works with a different value."
+        return f"used one value at {step}", "use a different value there"
     return None
 
 
-def _main_change(fact: BehaviorFunctionFact) -> tuple[BehaviorChangeFact, tuple[str, str]] | None:
-    for change in sorted(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9)):
-        described = describe(change, fact)
-        if described:
-            return change, described
-    return None
+def _flow_outcomes(facts: list[BehaviorFunctionFact], cap: int = 3) -> tuple[list[str], list[str]]:
+    befores: list[str] = []
+    afters: list[str] = []
+    for fact in facts:
+        seen: set[str] = set()
+        for change in sorted(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9)):
+            if change.kind in seen:
+                continue
+            seen.add(change.kind)
+            pair = _flow_change(change, fact)
+            if pair:
+                befores.append(pair[0])
+                afters.append(pair[1])
+            if len(afters) >= cap:
+                return befores, afters
+    return befores, afters
 
 
-def _also(fact: BehaviorFunctionFact, main: BehaviorChangeFact, cap: int = 2) -> list[str]:
-    """The other kinds of change in the same function, one standalone plain sentence each."""
-    out: list[str] = []
-    seen = {main.kind}
-    for change in sorted(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9)):
-        if change.kind in seen:
-            continue
-        seen.add(change.kind)
-        sentence = _standalone(change, fact)
-        if sentence:
-            out.append(sentence)
-        if len(out) >= cap:
-            break
-    return out
-
-
-def _standalone(change: BehaviorChangeFact, fact: BehaviorFunctionFact) -> str | None:
-    kind, before, after = change.kind, change.before, change.after
-    if kind == "signature":
-        described = describe(change, fact)
-        return described[1] if described else None
-    if kind == "error":
-        return "It fails differently in one case." if before and after else (
-            "It can now stop with an error in a new case." if after else "One case no longer fails."
-        )
-    if kind == "return":
-        return "It returns a different result." if before and after else (
-            "It returns early in a new case." if after else "One early return is gone."
-        )
-    if kind == "condition":
-        return "A rule deciding which path it takes changed."
-    if kind == "call":
-        name = next(iter(call_names(after or before or "")), "")
-        step = humanize(name.replace(".", "_")) if name else "another step"
-        return f"It now also triggers {step}." if after and not before else (
-            f"It no longer triggers {step}." if before and not after else "It triggers a different step."
-        )
-    if kind == "value":
-        return "It uses a different value."
-    return None
-
-
-def rule_behavior_items(facts: list[BehaviorFunctionFact], links) -> list[dict]:
-    """One plain item per changed public function, from its most caller-visible change."""
-    out: list[dict] = []
+def _flows(facts: list[BehaviorFunctionFact]) -> list[tuple[list[str], list[BehaviorFunctionFact]]]:
+    """Changed public steps grouped by the set of entry points that reach them."""
+    groups: dict[tuple[str, ...], list[BehaviorFunctionFact]] = {}
     for fact in facts:
         if not fact.public:
             continue
-        found = _main_change(fact)
-        if found is None:
+        entries = tuple(sorted(set(fact.reached_from)))
+        if not entries:
+            callers = sorted({site.split(" → ")[0] for site in fact.callers_at_head})
+            entries = tuple(callers)
+        groups.setdefault(entries, []).append(fact)
+    ordered = sorted(groups.items(), key=lambda pair: (not pair[0], -len(pair[0]), -len(pair[1])))
+    return [(list(entries), members) for entries, members in ordered]
+
+
+def _flow_title(entries: list[str]) -> str:
+    if not entries:
+        return "Changes no analyzed flow reaches"
+    names = [humanize(name) for name in entries]
+    return _cap(_list(names)) + (" flows" if len(names) > 1 else " flow")
+
+
+# --- system surfaces ---------------------------------------------------------------------------
+
+
+def surfaces_from(claims, evidences, repo: str | None) -> list[dict]:
+    """Surface findings (routes, data, configuration, dependencies, web interface) with evidence links."""
+    by_id = {getattr(e, "public_id", None) or getattr(e, "id", None): e for e in evidences or []}
+    out: list[dict] = []
+    for claim in claims or []:
+        if getattr(claim, "kind", None) != "surface_changed":
             continue
-        change, (before, after) = found
-        after = " ".join([after, *_also(fact, change)])
+        for evidence_id in getattr(claim, "evidence_public_ids", None) or getattr(claim, "evidence_ids", None) or []:
+            evidence = by_id.get(evidence_id)
+            parts = (getattr(evidence, "description", "") or "").split("|", 3) if evidence is not None else []
+            if len(parts) != 4:
+                continue
+            level, change, name, detail = parts
+            location = f"{evidence.file}:{evidence.start_line}" if evidence.start_line else evidence.file
+            href = (
+                f"https://github.com/{repo}/blob/{evidence.commit_sha}/{evidence.file}" + (f"#L{evidence.start_line}" if evidence.start_line else "")
+                if repo and evidence.commit_sha
+                else None
+            )
+            out.append({"level": level, "change": change, "name": name, "detail": detail, "evidence": {"label": location, "href": href}})
+    return out
+
+
+_SURFACE_TITLE = {
+    "api": "HTTP interface",
+    "data": "Stored data",
+    "config": "Configuration",
+    "dependency": "Dependencies",
+    "ui": "Web interface",
+}
+
+
+def _surface_sentences(level: str, items: list[dict]) -> tuple[str, str]:
+    added = [i for i in items if i["change"] == "added"]
+    removed = [i for i in items if i["change"] == "removed"]
+    changed = [i for i in items if i["change"] == "changed"]
+    if level == "ui":
+        n = len(items)
+        return "The web interface rendered as before.", f"{n} web interface file{'s' if n != 1 else ''} change what users see."
+    noun = {"api": "route", "data": "", "config": "setting", "dependency": "package"}.get(level, "")
+    def names(group):
+        return _list([f"{i['name']}" + (f" ({i['detail']})" if level in {"data", "dependency"} and i["detail"] else "") for i in group])
+    after: list[str] = []
+    before: list[str] = []
+    if added:
+        after.append(f"{'adds' if level != 'config' else 'now reads'} {noun + ' ' if noun else ''}{names(added)}")
+        before.append(f"had no {noun + ' ' if noun else ''}{names(added)}")
+    if removed:
+        after.append(f"removes {noun + ' ' if noun else ''}{names(removed)}")
+        before.append(f"had {noun + ' ' if noun else ''}{names(removed)}")
+    if changed:
+        after.append(f"changes {noun + ' ' if noun else ''}{names(changed)}")
+        before.append(f"used the earlier {noun + ' ' if noun else ''}{names(changed)}")
+    subject = {"api": "The service", "data": "The data model", "config": "The service", "dependency": "The build"}.get(level, "The system")
+    return f"{subject} {'; '.join(before)}.", f"{subject} {'; '.join(after)}."
+
+
+def _surface_severity(level: str, items: list[dict]) -> str:
+    if level == "api" and any(i["change"] == "removed" for i in items):
+        return "high"
+    if level == "data" and any("dropped" in i["detail"] or i["change"] == "removed" for i in items):
+        return "high"
+    if level in {"api", "data", "config"}:
+        return "medium"
+    return "low"
+
+
+def _by_level(surfaces: list[dict]) -> list[tuple[str, list[dict]]]:
+    grouped: dict[str, list[dict]] = {}
+    for item in surfaces or []:
+        grouped.setdefault(item["level"], []).append(item)
+    order = ["api", "data", "config", "dependency", "ui"]
+    return [(level, grouped[level]) for level in order if level in grouped]
+
+
+# --- sections ----------------------------------------------------------------------------------
+
+
+def rule_behavior_items(facts: list[BehaviorFunctionFact], links, surfaces: list[dict] | None = None) -> list[dict]:
+    """System-level interface changes first, then one item per flow."""
+    out: list[dict] = []
+    for level, items in _by_level(surfaces or []):
+        before, after = _surface_sentences(level, items)
         out.append(
             {
-                "title": _capability(fact.function),
+                "title": _SURFACE_TITLE.get(level, "System"),
                 "before": before,
                 "after": after,
-                "impact": f"Anything that goes through {_people(fact.reached_from)}." if fact.reached_from else "",
-                "evidence": links([c.id for c in fact.changes]),
+                "impact": "",
+                "evidence": [item["evidence"] for item in items[:4]],
+            }
+        )
+    for entries, members in _flows(facts):
+        befores, afters = _flow_outcomes(members)
+        if not afters:
+            continue
+        subject = "these flows" if len(entries) > 1 else "this flow"
+        out.append(
+            {
+                "title": _flow_title(entries),
+                "before": f"Previously, requests through {subject} {'; '.join(befores)}.",
+                "after": f"Now they {'; '.join(afters)}.",
+                "impact": "",
+                "evidence": links([c.id for fact in members for c in fact.changes]),
             }
         )
         if len(out) >= ITEM_CAP:
             break
-    return out
+    return out[:ITEM_CAP]
 
 
-def rule_impact_areas(behavior_facts: list[BehaviorFunctionFact], impact_facts: list[ImpactFact], links) -> list[dict]:
-    """One plain area per changed public function: what changes for whoever depends on it, how widely,
-    and the severity the analyzer's own findings give it."""
+def rule_impact_areas(
+    behavior_facts: list[BehaviorFunctionFact], impact_facts: list[ImpactFact], links, surfaces: list[dict] | None = None
+) -> list[dict]:
+    """Which flows and which system interfaces this PR affects, with the analyzer's severity."""
     areas: list[tuple[int, dict]] = []
-    for fact in behavior_facts:
-        if not fact.public:
+    for entries, members in _flows(behavior_facts):
+        _befores, afters = _flow_outcomes(members, cap=2)
+        if not afters:
             continue
-        found = _main_change(fact)
-        if found is None:
-            continue
-        change, (_before, after) = found
-        after = " ".join([after, *_also(fact, change)])
-        ids = {c.id for c in fact.changes}
+        ids = {c.id for fact in members for c in fact.changes}
         related = [f for f in impact_facts if f.kind == "attention" and ids & set(f.behavior_ids)]
         severity = min((f.severity or "low" for f in related), key=lambda s: _SEVERITY_RANK.get(s, 2), default="low")
-        reach = len(fact.reached_from)
-        parts = [after]
-        if reach:
-            parts.append(f"{reach} entry point{'s' if reach != 1 else ''} lead to it.")
-        if not fact.tests:
-            parts.append("No test exercises it.")
+        untested = [fact for fact in members if not fact.tests]
+        parts = [f"Requests through {'these flows' if len(entries) > 1 else 'this flow'} now {'; '.join(afters)}."]
+        if untested:
+            parts.append("No test exercises the changed steps." if len(untested) == len(members) else "Some changed steps have no test.")
         areas.append(
             (
                 _SEVERITY_RANK.get(severity, 2),
                 {
-                    "title": _capability(fact.function),
+                    "title": _flow_title(entries),
                     "severity": severity,
                     "summary": " ".join(parts),
-                    "who_notices": _people(fact.reached_from) if fact.reached_from else "",
+                    "who_notices": _list([humanize(name) for name in entries]) if entries else "",
                     "evidence": links([f.id for f in related] or sorted(ids)),
+                },
+            )
+        )
+    for level, items in _by_level(surfaces or []):
+        severity = _surface_severity(level, items)
+        _before, after = _surface_sentences(level, items)
+        who = {
+            "api": "Clients of the HTTP interface.",
+            "data": "Every environment that runs the migration, and code reading the stored data.",
+            "config": "Every deployment; the setting has to be provided.",
+            "dependency": "Builds and anything using the package.",
+            "ui": "Users of the web interface.",
+        }.get(level, "")
+        areas.append(
+            (
+                _SEVERITY_RANK[severity],
+                {
+                    "title": _SURFACE_TITLE.get(level, "System"),
+                    "severity": severity,
+                    "summary": after,
+                    "who_notices": who,
+                    "evidence": [item["evidence"] for item in items[:4]],
                 },
             )
         )

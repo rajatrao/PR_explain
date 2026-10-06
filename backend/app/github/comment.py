@@ -5,6 +5,7 @@ from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND
 from app.explanation.impact import build_impact_facts, build_impact_section, render_impact_markdown
+from app.explanation.plain_summary import surfaces_from
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
 
@@ -510,7 +511,9 @@ def _append_behavioral_changes(
     )
     narrative = getattr(document, "behavioral_changes", None) if document is not None else None
     reasons = list(getattr(document, "behavior_screening", None) or []) if document is not None else []
-    section = build_behavioral_section(narrative=narrative, facts=facts, prescreened=True, reasons=reasons)
+    section = build_behavioral_section(
+        narrative=narrative, facts=facts, prescreened=True, reasons=reasons, surfaces=surfaces_from(claims, evidence, repo)
+    )
     parts.append(render_behavioral_changes_markdown(section))
 
 
@@ -530,7 +533,12 @@ def _append_impact(
     narrative = getattr(document, "impact", None) if document is not None else None
     reasons = list(getattr(document, "impact_screening", None) or []) if document is not None else []
     section = build_impact_section(
-        narrative=narrative, behavior_facts=behavior_facts, impact_facts=impact_facts, prescreened=True, reasons=reasons
+        narrative=narrative,
+        behavior_facts=behavior_facts,
+        impact_facts=impact_facts,
+        prescreened=True,
+        reasons=reasons,
+        surfaces=surfaces_from(claims, evidence, repo),
     )
     parts.append(render_impact_markdown(section))
 

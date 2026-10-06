@@ -665,4 +665,4 @@ def test_missing_narrative_shows_a_short_notice_and_logs_the_reason(db):
     section = body["behavioral_changes"]
     # No narrative from the model: the section shows the before/after facts read from the diff.
     assert section["source"] == "rules"
-    assert section["changes"] and section["changes"][0]["title"] == "Create session"
+    assert section["changes"] and section["changes"][0]["title"] == "Google callback, login and refresh token flows"

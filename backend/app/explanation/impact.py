@@ -422,12 +422,13 @@ def build_impact_section(
     impact_facts: list[ImpactFact],
     prescreened: bool = False,
     reasons: list[str] | None = None,
+    surfaces: list[dict] | None = None,
 ) -> dict:
     # Screened again against the facts rebuilt from the stored analysis, as Behavioral Changes is.
     del prescreened
     chosen = screen_impact(narrative, behavior_facts, impact_facts, reasons) if narrative else None
     if chosen is None or not chosen.areas:
-        areas = _rule_areas(impact_facts, behavior_facts)
+        areas = _rule_areas(impact_facts, behavior_facts, surfaces)
         if areas:
             # No model summary passed the checks: show the analyzer's own findings, each from stored facts.
             return {"source": "rules", "overview": RULES_NOTE, "areas": areas}
@@ -448,13 +449,15 @@ def build_impact_section(
     }
 
 
-RULES_NOTE = "Summarized from the analyzer's findings on this pull request."
+RULES_NOTE = "Summarized by flow and by system interface from the analyzer's findings on this pull request."
 
 
-def _rule_areas(impact_facts: list[ImpactFact], behavior_facts: list[BehaviorFunctionFact]) -> list[dict]:
+def _rule_areas(impact_facts, behavior_facts, surfaces=None) -> list[dict]:
     from app.explanation.plain_summary import rule_impact_areas
 
-    return rule_impact_areas(behavior_facts, impact_facts, lambda ids: evidence_links(ids, behavior_facts, impact_facts))
+    return rule_impact_areas(
+        behavior_facts, impact_facts, lambda ids: evidence_links(ids, behavior_facts, impact_facts), surfaces
+    )
 
 
 def render_impact_markdown(section: dict) -> str:

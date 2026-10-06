@@ -127,6 +127,7 @@ def build_behavioral_section(
     facts: list[BehaviorFunctionFact],
     prescreened: bool = False,
     reasons: list[str] | None = None,
+    surfaces: list[dict] | None = None,
 ) -> dict:
     """The section the Explain tab and the comment show.
 
@@ -138,7 +139,7 @@ def build_behavioral_section(
     chosen = screen_narrative(narrative, facts, reasons) if narrative else None
     fact_count = sum(len(fact.changes) for fact in facts)
     if chosen is None or not chosen.changes:
-        rule_changes = _rule_changes(facts)
+        rule_changes = _rule_changes(facts, surfaces)
         if rule_changes:
             # No model summary passed the checks: show the before/after facts themselves, which are
             # read straight from the diff.
@@ -227,13 +228,13 @@ def _evidence_markdown(item: dict) -> str:
     return f"[{label}]({item['href']})" if item.get("href") else label
 
 
-RULES_NOTE = "Summarized from the changes in the diff."
+RULES_NOTE = "Summarized by flow and by system interface from the changes in the diff."
 
 
-def _rule_changes(facts: list[BehaviorFunctionFact]) -> list[dict]:
+def _rule_changes(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None) -> list[dict]:
     from app.explanation.plain_summary import rule_behavior_items
 
-    return rule_behavior_items(facts, lambda ids: evidence_links(ids, facts))
+    return rule_behavior_items(facts, lambda ids: evidence_links(ids, facts), surfaces)
 
 
 # --- screening ----------------------------------------------------------------------------
