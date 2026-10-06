@@ -628,6 +628,12 @@ def _changed_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
 
 
 def _shared_rows(symbols, relationships) -> list[dict]:
+    """Changed functions called from two or more places, with each caller and where it lives.
+
+    Private helpers and dunder methods are left out as targets and as callers, so a row never shows a
+    caller list that private-name filtering would empty. Test callers are left out too."""
+    from app.explanation.review_report import is_private
+
     changed_ids = {
         symbol_id
         for symbol in symbols
@@ -642,16 +648,23 @@ def _shared_rows(symbols, relationships) -> list[dict]:
         target = _rel_end(rel, "target")
         if not source or not target or target not in changed_ids:
             continue
-        caller = getattr(rel, "source_name", None) or source
-        names.setdefault(target, getattr(rel, "target_name", None) or target)
+        target_name = getattr(rel, "target_name", None) or ""
+        caller = getattr(rel, "source_name", None) or ""
+        source_file = getattr(rel, "source_file", None) or ""
+        if not target_name or not caller or is_private(target_name) or is_private(caller):
+            continue
+        if source_file and is_test_path(source_file):
+            continue
+        names.setdefault(target, target_name)
+        shown = f"{caller} ({source_file})" if source_file else caller
         bucket = callers.setdefault(target, [])
-        if caller not in bucket:
-            bucket.append(caller)
+        if shown not in bucket:
+            bucket.append(shown)
     rows = []
     for target, sources in sorted(callers.items(), key=lambda item: names.get(item[0], item[0])):
         if len(sources) < 2:
             continue
-        rows.append(_row(names.get(target, target), "callers: " + ", ".join(sources), None))
+        rows.append(_row(names[target], f"called from {len(sources)} places: " + ", ".join(sources), None))
     return rows or [_row("Shared code", "none found", None)]
 
 
