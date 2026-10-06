@@ -308,7 +308,10 @@ def _id(item):
 
 
 NO_FACTS = "No impact beyond the changed code was found."
-NO_SUMMARY = "An impact summary is not available for this commit: the model's summary was missing or did not pass the grounding check."
+NO_SUMMARY = (
+    "No impact summary could be verified against the diff for this commit. "
+    "Callers outside the diff are listed under Details › Callers outside the diff."
+)
 AREA_CAP = 5
 
 
@@ -373,7 +376,7 @@ def screen_impact(
                 issue = problem(text, allowed)
                 if issue:
                     break
-        if issue is None and grounding.off_topic([note.title, note.summary], allowed):
+        if issue is None and grounding.off_topic([note.title, note.summary, note.who_notices], note.fact_ids):
             issue = "shares no subject with the facts it cites"
         if issue:
             log.append(f"dropped '{note.title[:40]}': {issue}")
@@ -411,8 +414,7 @@ def build_impact_section(
     if chosen is None or not chosen.areas:
         overview = NO_FACTS
         if impact_facts:
-            why = [reason for reason in (reasons or []) if reason]
-            overview = NO_SUMMARY + (f" Reason: {why[0]}." if why else "")
+            overview = NO_SUMMARY
         return {"source": "none", "overview": overview, "areas": []}
     return {
         "source": "model",

@@ -43,8 +43,8 @@ WATCH_CAP = 3
 
 NO_FACTS = "The diff shows no statement-level behavior change."
 NO_NARRATIVE = (
-    "A behavioral summary is not available for this commit: the model's narration was missing "
-    "or did not pass the grounding check."
+    "No behavior summary could be verified against the diff for this commit. "
+    "The changed functions are listed under Details › Key Changes."
 )
 
 # Product and protocol names that read like identifiers but are not code.
@@ -113,8 +113,8 @@ def build_behavioral_section(
     if chosen is None or not chosen.changes:
         overview = NO_FACTS
         if fact_count:
-            why = [reason for reason in (reasons or []) if reason]
-            overview = NO_NARRATIVE + (f" Reason: {why[0]}." if why else "")
+            # Why it was dropped is in the run's event log; it is not reviewer content.
+            overview = NO_NARRATIVE
         return {
             "source": "none",
             "fact_count": fact_count,
@@ -236,7 +236,7 @@ def screen_narrative(
             issue = problem(text, allowed, may_name_entries=entries_ok, entries=entries)
             if issue:
                 break
-        if issue is None and grounding.off_topic([change.title, change.before, change.after], allowed):
+        if issue is None and grounding.off_topic([change.title, change.before, change.after, change.impact], change.fact_ids):
             issue = "shares no subject with the facts it cites"
         if issue:
             log.append(f"dropped '{change.title[:40]}': {issue}")
@@ -254,7 +254,7 @@ def screen_narrative(
             continue
         if (
             problem(note.text, allowed, may_name_entries=True, entries=grounding.entries_for(note.fact_ids)) is None
-            and not grounding.off_topic([note.text], allowed)
+            and not grounding.off_topic([note.text], note.fact_ids)
         ):
             watch.append(note)
         if len(watch) >= WATCH_CAP:
@@ -286,11 +286,35 @@ class Grounding:
                     names.update(self.by_change[behavior_id][0].reached_from)
         return names
 
-    def off_topic(self, texts: list[str], allowed: str) -> bool:
-        """True when none of the item's content words appears in the facts it cites."""
-        facts = _content_words(allowed)
+    def topic_text(self, ids: list[str]) -> str:
+        """Everything the cited facts are about: their statements plus the names of the functions,
+        files, callers, and entry points involved. Used only for the subject check, never to allow a
+        name in the text."""
+        chunks: list[str] = []
+        for item_id in self.known(ids):
+            if item_id in self.by_impact:
+                impact = self.by_impact[item_id]
+                chunks.append(impact.text)
+                behavior_ids = impact.behavior_ids
+            else:
+                behavior_ids = [item_id]
+            for behavior_id in behavior_ids:
+                if behavior_id not in self.by_change:
+                    continue
+                fact, _change = self.by_change[behavior_id]
+                chunks.extend([fact.function, fact.file, *fact.callers_at_head, *fact.tests])
+                chunks.extend(self._behavior_chunks(behavior_id))
+        return "\n".join(chunk for chunk in chunks if chunk)
+
+    def off_topic(self, texts: list[str], ids: list[str]) -> bool:
+        """True when none of the item's content words matches anything the cited facts are about.
+
+        Words match when one is a prefix of the other ("sess" and "session", "expir" and "expiry")."""
+        facts = _content_words(self.topic_text(ids))
         said = set().union(*(_content_words(text) for text in texts if text)) if texts else set()
-        return bool(said) and not (said & facts)
+        if not said or not facts:
+            return False
+        return not any(a.startswith(b) or b.startswith(a) for a in said for b in facts)
 
     def known(self, ids: list[str]) -> list[str]:
         return [item for item in ids if item in self.by_change or item in self.by_impact]

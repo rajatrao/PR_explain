@@ -1,3 +1,4 @@
+from app.explanation.behavioral_changes import NO_NARRATIVE
 import json
 import uuid
 
@@ -163,7 +164,7 @@ def test_empty_statements_keep_packet_explanation(db):
     )
     db.expire_all()
     stored = db.get(AnalysisRun, run.id)
-    assert provider.calls == 2  # Explain, then the Review tab
+    assert provider.calls == 3  # Explain, one retry for the missing narratives, then the Review tab
     assert stored.analysis_status == "succeeded"
     assert stored.explanation_status == "succeeded"
     assert stored.explanation_error is None
@@ -652,7 +653,7 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     assert "redisClient" not in review_md
 
 
-def test_missing_narrative_reason_is_shown(db):
+def test_missing_narrative_shows_a_short_notice_and_logs_the_reason(db):
     snapshot = load_oauth_snapshot()
     run = _revision(db, snapshot)
     source = CountingSource(snapshot)
@@ -663,4 +664,4 @@ def test_missing_narrative_reason_is_shown(db):
     body = TestClient(app).get(f"/api/runs/{run.id}").json()
     section = body["behavioral_changes"]
     assert section["source"] == "none"
-    assert section["overview"].endswith("Reason: the model returned no behavioral_changes.")
+    assert section["overview"] == NO_NARRATIVE
