@@ -499,12 +499,18 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
   const areas = section.areas ?? [];
   return (
     <section className="narrative impact-section">
-      <h3>Impact</h3>
+      <h3>
+        Impact{" "}
+        {section.severity ? <span className={`severity severity-${section.severity}`}>{section.severity}</span> : null}
+      </h3>
       {section.overview ? (
         <p className="behavior-summary">
           <InlineCode text={section.overview} />
         </p>
       ) : null}
+      {areas.length ? (
+        <details className="summary-details">
+          <summary>By flow and interface ({areas.length})</summary>
       {areas.map((area) => (
         <div className="behavior-card" key={area.title}>
           <h4 className="behavior-title">
@@ -516,6 +522,8 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
           <EvidenceLinks items={area.evidence} />
         </div>
       ))}
+        </details>
+      ) : null}
       {areas.length && section.source === "model" ? (
         <p className="kicker">
           Written by the configured model from rule-derived impact findings; each item was checked against the facts it
@@ -552,6 +560,9 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
         </p>
       ) : null}
       {changes.length === 0 && !section.overview ? <p>The diff shows no statement-level behavior change.</p> : null}
+      {changes.length ? (
+        <details className="summary-details">
+          <summary>By flow and interface ({changes.length})</summary>
       {changes.map((change, index) => (
         <div className="behavior-card" key={`${index}-${change.title}`}>
           <h4 className="behavior-title">
@@ -574,6 +585,8 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
           <EvidenceLinks items={change.evidence} />
         </div>
       ))}
+        </details>
+      ) : null}
       {section.watch?.length ? (
         <div className="flow-focus">
           <h4>Worth checking</h4>

@@ -491,3 +491,6 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 
 .behavior-evidence { margin: 4px 0 0; font-size: 13px; }
 .behavior-evidence a + a, .behavior-evidence code + code { margin-left: 2px; }
+
+.summary-details { margin: 8px 0 4px; }
+.summary-details > summary { cursor: pointer; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14px; color: #6b6258; }

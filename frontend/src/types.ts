@@ -173,6 +173,7 @@ export type BehavioralChanges = {
 
 export type ImpactSummary = {
   source: "model" | "rules" | "none";
+  severity?: "high" | "medium" | "low";
   overview: string;
   areas: {
     title: string;

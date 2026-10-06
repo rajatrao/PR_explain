@@ -426,16 +426,20 @@ def build_impact_section(
 ) -> dict:
     # Screened again against the facts rebuilt from the stored analysis, as Behavioral Changes is.
     del prescreened
+    from app.explanation.plain_summary import impact_overview
+
     chosen = screen_impact(narrative, behavior_facts, impact_facts, reasons) if narrative else None
+    # The overall summary and severity come from the rule findings, never from the model.
+    severity, summary = impact_overview(behavior_facts, impact_facts, surfaces) if (impact_facts or surfaces) else ("low", "")
     if chosen is None or not chosen.areas:
         areas = _rule_areas(impact_facts, behavior_facts, surfaces)
         if areas:
-            # No model summary passed the checks: show the analyzer's own findings, each from stored facts.
-            return {"source": "rules", "overview": RULES_NOTE, "areas": areas}
-        return {"source": "none", "overview": NO_FACTS, "areas": []}
+            return {"source": "rules", "severity": severity, "overview": summary or RULES_NOTE, "areas": areas}
+        return {"source": "none", "severity": severity, "overview": summary or NO_FACTS, "areas": []}
     return {
         "source": "model",
-        "overview": chosen.overview,
+        "severity": severity,
+        "overview": summary or chosen.overview,
         "areas": [
             {
                 "title": note.title,
@@ -468,12 +472,14 @@ def render_impact_markdown(section: dict) -> str:
         return "\n".join(lines)
     if section.get("overview"):
         lines.extend([section["overview"], ""])
+    lines.extend(["<details>", f"<summary>By flow and interface ({len(areas)})</summary>", ""])
     for area in areas:
         lines.append(f"**{area['title']}** ({area['severity']})")
         lines.append(f"- {area['summary']}")
         if area.get("evidence"):
             lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in area["evidence"]))
         lines.append("")
+    lines.extend(["</details>", ""])
     if section.get("source") == "model":
         lines.append(
             "_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._"

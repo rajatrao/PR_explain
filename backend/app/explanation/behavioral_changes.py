@@ -136,8 +136,13 @@ def build_behavioral_section(
     it rests on. Each change carries links to the diff lines its facts come from.
     """
     del prescreened
+    from app.explanation.plain_summary import behavior_overview
+
     chosen = screen_narrative(narrative, facts, reasons) if narrative else None
     fact_count = sum(len(fact.changes) for fact in facts)
+    # The overall summary is written by rule from the PR's facts, so it cannot claim anything the diff
+    # does not show; the items below it are the model's (when they pass the checks) or the rule's.
+    summary = behavior_overview(facts, surfaces)
     if chosen is None or not chosen.changes:
         rule_changes = _rule_changes(facts, surfaces)
         if rule_changes:
@@ -146,7 +151,7 @@ def build_behavioral_section(
             return {
                 "source": "rules",
                 "fact_count": fact_count,
-                "overview": RULES_NOTE,
+                "overview": summary or RULES_NOTE,
                 "changes": rule_changes,
                 "watch": [],
             }
@@ -160,7 +165,7 @@ def build_behavioral_section(
     return {
         "source": "model",
         "fact_count": fact_count,
-        "overview": chosen.overview,
+        "overview": summary or chosen.overview,
         "changes": [
             {
                 "title": change.title,
@@ -183,6 +188,7 @@ def render_behavioral_changes_markdown(section: dict) -> str:
         return "\n".join(lines)
     if section.get("overview"):
         lines.extend([section["overview"], ""])
+    lines.extend(["<details>", f"<summary>By flow and interface ({len(changes)})</summary>", ""])
     for change in changes:
         lines.append(f"**{change['title']}**")
         lines.append(f"- **Before:** {change['before']}")
@@ -190,6 +196,7 @@ def render_behavioral_changes_markdown(section: dict) -> str:
         if change.get("evidence"):
             lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in change["evidence"]))
         lines.append("")
+    lines.extend(["</details>", ""])
     watch = section.get("watch") or []
     if watch:
         lines.append("**Worth checking**")
