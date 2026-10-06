@@ -215,6 +215,13 @@ export type ReviewReport = {
   top_questions: (Grounded & { question: string; why_ask: string; relevant_code: string })[];
   overall_risk: ReviewPriority;
   risk_reason: string;
+  risk_drivers?: {
+    text: string;
+    level: ReviewPriority;
+    location?: string | null;
+    fact_ids: string[];
+    source: "rules" | "model";
+  }[];
 };
 
 export type EvidenceLink = { label: string; href?: string | null };

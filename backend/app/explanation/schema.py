@@ -298,6 +298,18 @@ class TopQuestion(_Grounded):
     relevant_code: str
 
 
+class RiskDriver(BaseModel):
+    """One piece of evidence behind the overall review risk."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    level: Priority
+    location: str | None = None
+    fact_ids: list[str] = Field(default_factory=list)
+    source: str = "rules"
+
+
 class ReviewReport(BaseModel):
     """The Review tab: where to spend review time, written from the diff and the review facts."""
 
@@ -312,6 +324,8 @@ class ReviewReport(BaseModel):
     undetermined: list[str] = Field(default_factory=list)
     overall_risk: Priority = "Low"
     risk_reason: str = ""
+    # The evidence the risk level rests on, computed by rule. Hidden from the model's schema.
+    risk_drivers: SkipJsonSchema[list[RiskDriver]] = Field(default_factory=list)
 
 
 class ExplanationDocument(BaseModel):

@@ -234,14 +234,16 @@ def _review_markdown(document, *, symbols, relationships, claims, evidence, repo
     """The Review section: the stored review report, or the rule review when none was stored."""
     from types import SimpleNamespace
 
-    from app.explanation.review_report import build_review, render_review_markdown
+    from app.explanation.review_report import build_review, render_review_markdown, stored_review
 
     report = getattr(document, "review", None)
+    stored = SimpleNamespace(
+        symbols=symbols or [], relationships=relationships or [], claims=claims or [], evidences=evidence or []
+    )
     if report is None:
-        stored = SimpleNamespace(
-            symbols=symbols or [], relationships=relationships or [], claims=claims or [], evidences=evidence or []
-        )
         report = build_review(stored=stored, repo=repo, sha=sha, patches=patches)
+    else:
+        report = stored_review(report, stored=stored, repo=repo, sha=sha)
     return render_review_markdown(report, repo=repo, sha=sha)
 
 
