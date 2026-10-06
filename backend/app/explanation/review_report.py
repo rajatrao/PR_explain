@@ -61,9 +61,12 @@ def build_review_facts(*, symbols, relationships, claims, evidences, repo, sha) 
     )
     found: list[tuple[str, str, str | None, str]] = []  # kind, text, location, severity
     for call in calls:
+        if is_private(call["callee"]):
+            continue
         where = f"{call['file']}:{call['line']}" if call["line"] else call["file"]
         shown = f"`{call['call']}`" if call["call"] else call["callee"]
-        text = f"{call['caller'] or 'Code'} in {where} calls {shown}, which this pull request changes. " + " ".join(call["notes"])
+        caller = call["caller"] if call["caller"] and not is_private(call["caller"]) else "Code"
+        text = f"{caller} in {where} calls {shown}, which this pull request changes. " + " ".join(call["notes"])
         flags = call["flags"]
         severity = "low"
         if flags.get("missing"):
@@ -77,6 +80,9 @@ def build_review_facts(*, symbols, relationships, claims, evidences, repo, sha) 
         text = (getattr(claim, "text", None) or "").strip()
         subject = getattr(claim, "subject", None) or ""
         where = _claim_location(claim, evidence_by_id)
+        # Private helpers and dunder methods are not review findings, and are never named in one.
+        if is_private(subject) or mentions_private(text):
+            continue
         if kind == "call_context" and "without" in text and subject in changed:
             found.append(("error_handling", text, where, "medium"))
         elif kind == "dangling_call":
@@ -314,10 +320,14 @@ def rule_review(
     comparison = build_behavior_comparison(
         symbols=symbols or [], relationships=relationships or [], claims=claims or [], evidences=evidences or []
     )
-    items = [item for item in comparison.get("items") or [] if item.get("changes")]
+    items = [item for item in comparison.get("items") or [] if item.get("changes") and not is_private(item.get("name"))]
     calls, _ = outside_calls(
         symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
     )
+    calls = [call for call in calls if not is_private(call["callee"])]
+    for call in calls:
+        if call["caller"] and is_private(call["caller"]):
+            call["caller"] = ""
     caller_fact = {}
     for call in calls:
         for fact in review_facts:
@@ -786,7 +796,41 @@ def finalize_review(report: ReviewReport) -> ReviewReport:
         area.locations = [loc for loc in area.locations if not _private_or_ignored(loc)]
         kept.append(area)
     out.attention = kept
+    out.top_questions = [
+        q for q in out.top_questions if not any(mentions_private(t) for t in (q.question, q.why_ask, q.relevant_code))
+    ]
+    out.bugs = [
+        b for b in out.bugs if not any(mentions_private(t) for t in (b.finding, b.evidence, b.scenario, b.impact))
+    ]
+    drivers = [d for d in out.risk_drivers if not mentions_private(d.text)]
+    if len(drivers) != len(out.risk_drivers):
+        # A finding about a private helper no longer drives the risk; the level and reason follow
+        # the findings that remain.
+        rules = [d for d in drivers if d.source == "rules"]
+        floor = min((d.level for d in rules), key=lambda level: _RANK[level], default="Low")
+        raised = next((d for d in drivers if d.source == "model" and _RANK[d.level] == _RANK[floor] - 1), None)
+        out.overall_risk = raised.level if raised else floor
+        out.risk_drivers = drivers[:RISK_DRIVER_CAP]
+        out.risk_reason = _risk_reason(out.overall_risk, floor, sorted(drivers, key=lambda d: _RANK[d.level]), raised)
+    elif mentions_private(out.risk_reason):
+        floor = min((d.level for d in drivers if d.source == "rules"), key=lambda level: _RANK[level], default="Low")
+        raised = next((d for d in drivers if d.source == "model"), None)
+        out.risk_reason = _risk_reason(out.overall_risk, floor, sorted(drivers, key=lambda d: _RANK[d.level]), raised)
     return out
+
+
+_PRIVATE_TOKEN = re.compile(r"(?<![\w#])(?:_{1,2}[A-Za-z]\w*|#[A-Za-z]\w*)")
+
+
+def is_private(name: str | None) -> bool:
+    """A private helper (leading underscore, JS #name) or a dunder method such as __repr__."""
+    tail = (name or "").rsplit(".", 1)[-1]
+    return tail.startswith(("_", "#"))
+
+
+def mentions_private(text: str | None) -> bool:
+    """True when the text names a private helper or dunder method, as in `_detail` or self._detail."""
+    return bool(_PRIVATE_TOKEN.search(text or ""))
 
 
 def _private_or_ignored(text: str) -> bool:

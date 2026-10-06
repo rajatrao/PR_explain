@@ -253,3 +253,27 @@ def test_model_reason_is_shown_only_when_it_agrees_and_is_grounded():
     invented = ReviewReport(overall_risk="Medium", risk_reason="It affects 40 merchants via paymentGateway.")
     dropped = assess_risk(merge_review(invented, rules), facts, model=invented, ground=ground)
     assert "merchants" not in dropped.risk_reason
+
+
+def test_private_helpers_never_appear_in_questions_or_the_risk():
+    from app.explanation.review_report import finalize_review, mentions_private
+    from app.explanation.schema import RiskDriver, TopQuestion
+
+    report = ReviewReport(
+        top_questions=[
+            TopQuestion(question="Does _detail still load every run?", why_ask="w", relevant_code="app/api.py:281", fact_ids=["r1"]),
+            TopQuestion(question="Do callers of charge pass currency?", why_ask="w", relevant_code="app/billing.py:10", fact_ids=["r2"]),
+        ],
+        overall_risk="High",
+        risk_drivers=[
+            RiskDriver(text="_detail in app/api.py:281 has no test.", level="High", location="app/api.py:281", fact_ids=["r1"]),
+            RiskDriver(text="nightly_job relies on the old retries default.", level="Medium", location="app/jobs.py:3", fact_ids=["r2"]),
+        ],
+        risk_reason="High: _detail in app/api.py:281 has no test.",
+    )
+    out = finalize_review(report)
+    assert [q.question for q in out.top_questions] == ["Do callers of charge pass currency?"]
+    assert out.overall_risk == "Medium"
+    assert [d.text for d in out.risk_drivers] == ["nightly_job relies on the old retries default."]
+    assert not mentions_private(out.risk_reason) and out.risk_reason.startswith("Medium: ")
+    assert mentions_private("self._detail()") and not mentions_private("render_details uses snake_case names")
