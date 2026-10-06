@@ -521,7 +521,7 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
           <EvidenceLinks items={area.evidence} />
         </div>
       ))}
-      {areas.length ? (
+      {areas.length && section.source === "model" ? (
         <p className="kicker">
           Written by the configured model from rule-derived impact findings; each item was checked against the facts it
           cites.
@@ -596,7 +596,7 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
           </ul>
         </div>
       ) : null}
-      {changes.length ? (
+      {changes.length && section.source === "model" ? (
         <p className="kicker">
           Written by the configured model from {section.fact_count} before-and-after facts in the diff; each item was
           checked against the facts it cites.

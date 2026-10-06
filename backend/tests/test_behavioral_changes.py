@@ -185,16 +185,23 @@ def test_entry_points_may_be_named_only_in_impact():
     assert screen_narrative(bad, _facts()) is None
 
 
-def test_no_usable_narrative_shows_a_notice_not_a_code_list():
+def test_no_usable_narrative_falls_back_to_the_facts_from_the_diff():
     narrative = BehavioralNarrative(
         changes=[{"title": "X", "before": "Previously, `made_up`.", "after": "Now `other`.", "fact_ids": ["b1"]}]
     )
-    section = build_behavioral_section(narrative=narrative, facts=_facts())
-    assert section["source"] == "none"
-    assert section["changes"] == []
-    assert section["overview"] == NO_NARRATIVE
+    facts = _facts()
+    facts[0].changes[0].location = "app/billing.py:13"
+    section = build_behavioral_section(narrative=narrative, facts=facts)
+    assert section["source"] == "rules"
+    # Public functions only, each with its most caller-visible before/after pair, read from the diff.
+    assert [c["title"] for c in section["changes"]] == ["`charge` — errors (also calls, returns)"]
+    change = section["changes"][0]
+    assert change["before"] == '`raise ValueError("empty order")` when `total <= 0`'
+    assert change["after"] == '`raise InvalidOrder("negative total")` when `total < 0`'
+    assert change["impact"] == "Reached from `post_checkout`."
+    assert change["evidence"][0]["label"] == "app/billing.py:13"
     markdown = render_behavioral_changes_markdown(section)
-    assert "charge" not in markdown and "audit" not in markdown
+    assert "made_up" not in markdown and "Written by the configured model" not in markdown
     assert build_behavioral_section(narrative=None, facts=[])["overview"] == "The diff shows no statement-level behavior change."
 
 
@@ -323,7 +330,8 @@ def test_section_links_each_change_to_the_diff_lines_it_rests_on():
     assert "- **Evidence:** [`app/billing.py:13`](https://github.com/acme/shop/blob/bbb/app/billing.py#L13)" in markdown
     # A stored narrative is screened again: one that no longer matches the facts is not shown.
     stale = _one("Password resets", "Previously, reset emails were sent.", "With this change, they are queued.", fact_ids=("b3",))
-    assert build_behavioral_section(narrative=stale, facts=facts, prescreened=True)["changes"] == []
+    shown = build_behavioral_section(narrative=stale, facts=facts, prescreened=True)
+    assert shown["source"] == "rules" and all("Password" not in c["title"] for c in shown["changes"])
 
 
 def test_plain_words_about_the_changed_function_are_on_topic():

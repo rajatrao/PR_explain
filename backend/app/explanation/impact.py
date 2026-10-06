@@ -370,6 +370,12 @@ def screen_impact(
         if allowed is None:
             log.append(f"dropped '{note.title[:40]}': cites no known fact")
             continue
+        note = note.model_copy(
+            update={field: grounding.strip_judgments(getattr(note, field), note.fact_ids) for field in ("title", "summary", "who_notices")}
+        )
+        if not (note.title and note.summary):
+            log.append("dropped an area: only judged the change")
+            continue
         issue = None
         for text in (note.title, note.summary, note.who_notices):
             if text:
@@ -395,10 +401,10 @@ def screen_impact(
         return None
     areas.sort(key=lambda item: _RANK[item.severity])
 
-    overview = narrative.overview.strip()
+    kept_ids = [fact_id for area in areas for fact_id in area.fact_ids]
+    overview = grounding.strip_judgments(narrative.overview.strip(), kept_ids)
     everything = grounding.scope([fact.id for fact in impact_facts]) or ""
     # The overview may only summarize the kept areas: it is checked against their facts alone.
-    kept_ids = [fact_id for area in areas for fact_id in area.fact_ids]
     if overview and (
         problem(overview, everything)
         or grounding.off_topic([overview], kept_ids)
@@ -421,10 +427,11 @@ def build_impact_section(
     del prescreened
     chosen = screen_impact(narrative, behavior_facts, impact_facts, reasons) if narrative else None
     if chosen is None or not chosen.areas:
-        overview = NO_FACTS
-        if impact_facts:
-            overview = NO_SUMMARY
-        return {"source": "none", "overview": overview, "areas": []}
+        areas = _rule_areas(impact_facts, behavior_facts)
+        if areas:
+            # No model summary passed the checks: show the analyzer's own findings, each from stored facts.
+            return {"source": "rules", "overview": RULES_NOTE, "areas": areas}
+        return {"source": "none", "overview": NO_FACTS, "areas": []}
     return {
         "source": "model",
         "overview": chosen.overview,
@@ -439,6 +446,40 @@ def build_impact_section(
             for note in chosen.areas
         ],
     }
+
+
+RULES_NOTE = "From the analyzer's findings: the model's summary did not pass the evidence checks for this commit."
+
+
+def _rule_areas(impact_facts: list[ImpactFact], behavior_facts: list[BehaviorFunctionFact]) -> list[dict]:
+    """The rule findings that need attention, then one area for the workflows that reach the change."""
+    out: list[dict] = []
+    for fact in impact_facts:
+        if fact.kind != "attention":
+            continue
+        title, _, rest = fact.text.partition(". ")
+        out.append(
+            {
+                "title": title.rstrip("."),
+                "severity": fact.severity or "low",
+                "summary": rest.strip() or title,
+                "who_notices": "",
+                "evidence": evidence_links([fact.id], behavior_facts, impact_facts),
+            }
+        )
+    dependents = [fact for fact in impact_facts if fact.kind == "dependents"]
+    if dependents:
+        entries = [fact.text.split(" reaches ", 1)[0] for fact in dependents]
+        out.append(
+            {
+                "title": f"{len(entries)} entry point{'s' if len(entries) != 1 else ''} reach the changed code",
+                "severity": "low",
+                "summary": " ".join(fact.text for fact in dependents[:5]),
+                "who_notices": ", ".join(entries[:8]),
+                "evidence": evidence_links([fact.id for fact in dependents], behavior_facts, impact_facts),
+            }
+        )
+    return out[:AREA_CAP]
 
 
 def render_impact_markdown(section: dict) -> str:
@@ -457,7 +498,10 @@ def render_impact_markdown(section: dict) -> str:
         if area.get("evidence"):
             lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in area["evidence"]))
         lines.append("")
-    lines.append("_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._")
+    if section.get("source") == "model":
+        lines.append(
+            "_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._"
+        )
     return "\n".join(lines).strip()
 
 
