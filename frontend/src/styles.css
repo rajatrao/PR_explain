@@ -401,12 +401,6 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 }
 
 /* Behavioral Changes, Old flow vs New flow */
-.behavior-flows h4 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
-.flow-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.flow-side { min-width: 0; border-top: 3px solid #d9d0c3; padding-top: 8px; }
-.flow-before { border-top-color: #c0392b; }
-.flow-after { border-top-color: #1e8449; }
-.flow-side .diagram { margin-top: 0; }
 .behavior-summary { margin: 0 0 12px; }
 .behavior-card { border: 1px solid #d9d0c3; border-radius: 6px; padding: 12px 14px; margin: 0 0 14px; background: #fbf9f4; }
 .behavior-card.removed { border-color: #e6b0aa; }
@@ -428,7 +422,7 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 .behavior-reach { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 10px; font-size: 14px; }
 .behavior-reach ul { margin: 0; padding-left: 18px; }
 @media (max-width: 800px) {
-  .flow-pair, .behavior-reach { grid-template-columns: 1fr; }
+  .behavior-reach { grid-template-columns: 1fr; }
   .behavior-table { table-layout: auto; }
 }
 .behavior-title { margin: 0 0 8px; font-size: 16px; font-weight: 600; }

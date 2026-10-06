@@ -113,8 +113,8 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "```mermaid" in explain
     assert "### Diagram" not in body
     assert "## Diagram" not in body
-    # Details holds the old and new flow diagrams (above Key Changes); no other diagram.
-    assert "```mermaid" not in details or "### Old flow vs New flow" in details
+    # Details has no diagrams; the old and new flow diagrams were removed.
+    assert "```mermaid" not in details and "Old flow" not in details
     assert "```mermaid" not in review
     assert "### Impact" not in details
     assert "### Impact" in explain

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from app.explanation.changes import build_file_changes, file_body, render_file_changes_markdown
-from app.explanation.behavior_comparison import build_behavior_comparison
-from app.explanation.behavior_flow import build_behavior_flows, render_behavior_flows_markdown
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND
@@ -196,9 +194,7 @@ def render_combined_comment(
         document_unknowns=document_unknowns,
         review_questions=review_questions,
     )
-    flow_blocks: list[str] = []
-    _append_flow_diagrams(flow_blocks, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
-    details_md = _before_key_changes(_markdown_for(built, _DETAILS_TITLES), "\n\n".join(flow_blocks))
+    details_md = _markdown_for(built, _DETAILS_TITLES)
     review_md = _review_markdown(
         document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence,
         repo=repo_full_name, sha=head_sha, patches=patches,
@@ -500,20 +496,6 @@ def _append_change_flow(parts: list[str], change_flow: str | None) -> None:
     parts.append("### Change flow\n\n" + _flow_markdown(text))
 
 
-def _append_flow_diagrams(parts: list[str], *, symbols, relationships, claims, evidence) -> None:
-    comparison = build_behavior_comparison(
-        symbols=symbols or [],
-        relationships=relationships or [],
-        claims=claims or [],
-        evidences=evidence or [],
-    )
-    flows = render_behavior_flows_markdown(
-        build_behavior_flows(comparison, symbols=symbols or [], relationships=relationships or [])
-    )
-    if flows:
-        parts.append(flows)
-
-
 def _append_behavioral_changes(
     parts: list[str], *, document, symbols, relationships, claims, evidence, repo=None, base_sha=None, head_sha=None
 ) -> None:
@@ -551,17 +533,6 @@ def _append_impact(
         narrative=narrative, behavior_facts=behavior_facts, impact_facts=impact_facts, prescreened=True, reasons=reasons
     )
     parts.append(render_impact_markdown(section))
-
-
-def _before_key_changes(details_md: str, block: str) -> str:
-    """Put the old and new flow diagrams at the top of Details, above Key Changes."""
-    if not block:
-        return details_md
-    marker = "### Key Changes"
-    if marker in details_md:
-        head, tail = details_md.split(marker, 1)
-        return f"{head}{block}\n\n{marker}{tail}"
-    return f"{block}\n\n{details_md}" if details_md else block
 
 
 def _flow_markdown(text: str) -> str:
