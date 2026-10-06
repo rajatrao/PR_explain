@@ -1294,7 +1294,7 @@ python -m app.llm.bench
 
  The benchmark produces a local JSON report covering areas such as:
 
- - Grounding
+- Grounding
 - Structure
 - Latency
 - Process memory
@@ -1627,7 +1627,12 @@ LLM_PROVIDER=openai
  > "Now explain those facts to a human."
 
 ---
-
+# Future work
+- Support for scalable async processing of PR explain request
+- Improve explain notes to give more in-depth understanding of changes
+- Add more support for overall review experience
+ 
+---
  # License
 
 MIT — for hackathon / research use.
