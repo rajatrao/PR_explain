@@ -423,6 +423,7 @@ def build_impact_section(
     prescreened: bool = False,
     reasons: list[str] | None = None,
     surfaces: list[dict] | None = None,
+    system: dict | None = None,
 ) -> dict:
     # Screened again against the facts rebuilt from the stored analysis, as Behavioral Changes is.
     del prescreened
@@ -432,9 +433,11 @@ def build_impact_section(
     del narrative, reasons
     chosen = None
     # The overall summary and severity come from the rule findings, never from the model.
-    severity, summary = impact_overview(behavior_facts, impact_facts, surfaces) if (impact_facts or surfaces) else ("low", "")
+    severity, summary = (
+        impact_overview(behavior_facts, impact_facts, surfaces, system) if (impact_facts or surfaces or system) else ("low", "")
+    )
     if chosen is None or not chosen.areas:
-        areas = _rule_areas(impact_facts, behavior_facts, surfaces)
+        areas = _rule_areas(impact_facts, behavior_facts, surfaces, system)
         if areas:
             return {"source": "rules", "severity": severity, "overview": summary or RULES_NOTE, "areas": areas}
         return {"source": "none", "severity": severity, "overview": summary or NO_FACTS, "areas": []}
@@ -458,11 +461,11 @@ def build_impact_section(
 RULES_NOTE = "Summarized by flow and by system interface from the analyzer's findings on this pull request."
 
 
-def _rule_areas(impact_facts, behavior_facts, surfaces=None) -> list[dict]:
+def _rule_areas(impact_facts, behavior_facts, surfaces=None, system=None) -> list[dict]:
     from app.explanation.plain_summary import rule_impact_areas
 
     return rule_impact_areas(
-        behavior_facts, impact_facts, lambda ids: evidence_links(ids, behavior_facts, impact_facts), surfaces
+        behavior_facts, impact_facts, lambda ids: evidence_links(ids, behavior_facts, impact_facts), surfaces, system
     )
 
 
@@ -474,7 +477,7 @@ def render_impact_markdown(section: dict) -> str:
         return "\n".join(lines)
     if section.get("overview"):
         lines.extend([section["overview"], ""])
-    lines.extend(["<details>", f"<summary>By flow and interface ({len(areas)})</summary>", ""])
+    lines.extend(["<details>", f"<summary>Risks, flows and interfaces ({len(areas)})</summary>", ""])
     for area in areas:
         lines.append(f"**{area['title']}** ({area['severity']})")
         lines.append(f"- {area['summary']}")

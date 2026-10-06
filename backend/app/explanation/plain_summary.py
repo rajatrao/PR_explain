@@ -214,9 +214,54 @@ def _by_level(surfaces: list[dict]) -> list[tuple[str, list[dict]]]:
 # --- sections ----------------------------------------------------------------------------------
 
 
-def rule_behavior_items(facts: list[BehaviorFunctionFact], links, surfaces: list[dict] | None = None) -> list[dict]:
-    """System-level interface changes first, then one item per flow."""
+def _capabilities(facts: list[BehaviorFunctionFact]) -> tuple[list[BehaviorFunctionFact], list[BehaviorFunctionFact]]:
+    """Public steps this change adds (no base definition) and removes."""
+    added = [
+        f for f in facts
+        if f.public and any(c.kind == "signature" and c.after and not c.before for c in f.changes)
+    ]
+    removed = [f for f in facts if f.public and any(c.kind == "removed_function" for c in f.changes)]
+    return added, removed
+
+
+def rule_behavior_items(
+    facts: list[BehaviorFunctionFact], links, surfaces: list[dict] | None = None, system: dict | None = None
+) -> list[dict]:
+    """System-level interface changes, component coupling, and capabilities first, then one item per flow."""
     out: list[dict] = []
+    system = system or {}
+    added, removed = _capabilities(facts)
+    if added or removed:
+        before = []
+        after = []
+        if added:
+            before.append(f"there was no {_list([humanize(f.function) for f in added])}")
+            after.append(f"it adds {_list([humanize(f.function) for f in added])}")
+        if removed:
+            before.append(f"the system offered {_list([humanize(f.function) for f in removed])}")
+            after.append(f"it removes {_list([humanize(f.function) for f in removed])}")
+        out.append(
+            {
+                "title": "Capabilities",
+                "before": _cap("; ".join(before)) + ".",
+                "after": _cap("; ".join(after)) + ".",
+                "impact": "",
+                "evidence": links([c.id for f in added + removed for c in f.changes[:1]]),
+            }
+        )
+    deps = (system.get("added_deps") or []) + (system.get("dropped_deps") or [])
+    if deps:
+        from app.explanation.architecture import coupling_sentences
+
+        out.append(
+            {
+                "title": "Component dependencies",
+                "before": "The components depended on each other as before this change.",
+                "after": _cap("; ".join(coupling_sentences(system))) + ".",
+                "impact": "",
+                "evidence": [e for dep in deps for e in dep["evidence"]][:4],
+            }
+        )
     for level, items in _by_level(surfaces or []):
         before, after = _surface_sentences(level, items)
         out.append(
@@ -230,7 +275,7 @@ def rule_behavior_items(facts: list[BehaviorFunctionFact], links, surfaces: list
         )
     for entries, members in _flows(facts):
         befores, afters = _flow_outcomes(members)
-        if not afters:
+        if not afters or not entries:
             continue
         subject = "these flows" if len(entries) > 1 else "this flow"
         out.append(
@@ -248,19 +293,48 @@ def rule_behavior_items(facts: list[BehaviorFunctionFact], links, surfaces: list
 
 
 def rule_impact_areas(
-    behavior_facts: list[BehaviorFunctionFact], impact_facts: list[ImpactFact], links, surfaces: list[dict] | None = None
+    behavior_facts: list[BehaviorFunctionFact],
+    impact_facts: list[ImpactFact],
+    links,
+    surfaces: list[dict] | None = None,
+    system: dict | None = None,
 ) -> list[dict]:
-    """Which flows and which system interfaces this PR affects, with the analyzer's severity."""
+    """Risks the analysis found, component coupling, then the flows and system interfaces this PR affects."""
     areas: list[tuple[int, dict]] = []
+    system = system or {}
+    for item in system.get("risks") or []:
+        areas.append(
+            (
+                _SEVERITY_RANK[item["severity"]] - 0.5,
+                {"title": item["title"], "severity": item["severity"], "summary": item["text"], "who_notices": "", "evidence": item["evidence"]},
+            )
+        )
+    deps = (system.get("added_deps") or []) + (system.get("dropped_deps") or [])
+    if deps:
+        from app.explanation.architecture import coupling_sentences
+
+        areas.append(
+            (
+                _SEVERITY_RANK["low"],
+                {
+                    "title": "Component coupling",
+                    "severity": "low",
+                    "summary": _cap("; ".join(coupling_sentences(system)))
+                    + ". New dependencies between components change what must be deployed and tested together.",
+                    "who_notices": "",
+                    "evidence": [e for dep in deps for e in dep["evidence"]][:4],
+                },
+            )
+        )
     for entries, members in _flows(behavior_facts):
-        _befores, afters = _flow_outcomes(members, cap=2)
-        if not afters:
+        afters = _outcomes(members, cap=3)
+        if not afters or not entries:
             continue
         ids = {c.id for fact in members for c in fact.changes}
         related = [f for f in impact_facts if f.kind == "attention" and ids & set(f.behavior_ids)]
         severity = min((f.severity or "low" for f in related), key=lambda s: _SEVERITY_RANK.get(s, 2), default="low")
         untested = [fact for fact in members if not fact.tests]
-        parts = [f"Requests through {'these flows' if len(entries) > 1 else 'this flow'} now {'; '.join(afters)}."]
+        parts = [f"Requests through {'these flows' if len(entries) > 1 else 'this flow'} now {_join_clauses(afters)}."]
         if untested:
             parts.append("No test exercises the changed steps." if len(untested) == len(members) else "Some changed steps have no test.")
         areas.append(
@@ -298,7 +372,7 @@ def rule_impact_areas(
             )
         )
     areas.sort(key=lambda pair: pair[0])
-    return [area for _, area in areas[:ITEM_CAP]]
+    return [area for _, area in areas[: ITEM_CAP + 2]]
 
 
 # --- overall summaries ---------------------------------------------------------------------------
@@ -377,8 +451,9 @@ def _join_clauses(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def behavior_overview(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None) -> str:
+def behavior_overview(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None, system: dict | None = None) -> str:
     """A short, plain summary of how the system behaves differently, from the PR's facts only."""
+    system = system or {}
     flows = [(entries, members) for entries, members in _flows(facts) if entries]
     unreached = [members for entries, members in _flows(facts) if not entries]
     interfaces = _interface_phrases(surfaces or [])
@@ -397,39 +472,68 @@ def behavior_overview(facts: list[BehaviorFunctionFact], surfaces: list[dict] | 
                 sentences.append(f"Requests through {subject} now {_join_clauses(outcomes)}.")
     elif interfaces:
         sentences.append(f"This pull request {_join_clauses(interfaces)}.")
+    added, removed = _capabilities(facts)
+    if added:
+        sentences.append(f"It adds {len(added)} new capabilit{'ies' if len(added) != 1 else 'y'} ({_list([humanize(f.function) for f in added])}).")
+    if removed:
+        sentences.append(f"It removes {len(removed)} capabilit{'ies' if len(removed) != 1 else 'y'} ({_list([humanize(f.function) for f in removed])}).")
+    from app.explanation.architecture import coupling_sentences
+
+    coupling = coupling_sentences(system)
+    if coupling:
+        sentences.append(f"Between components, {_join_clauses(coupling)}.")
     if unreached:
         n = sum(len(members) for members in unreached)
         sentences.append(
             f"{n} other changed part{'s' if n != 1 else ''} of the code {'are' if n != 1 else 'is'} not reached from any analyzed entry point."
         )
+    if system.get("changed_components"):
+        comps = system["changed_components"]
+        sentences.insert(0, f"Changed components: {_list(comps, 6)}.")
     return " ".join(sentences)
 
 
 def impact_overview(
-    behavior_facts: list[BehaviorFunctionFact], impact_facts: list[ImpactFact], surfaces: list[dict] | None = None
+    behavior_facts: list[BehaviorFunctionFact],
+    impact_facts: list[ImpactFact],
+    surfaces: list[dict] | None = None,
+    system: dict | None = None,
 ) -> tuple[str, str]:
     """(overall severity, a short plain summary of what the PR affects), from rule findings only."""
+    system = system or {}
     attention = [f for f in impact_facts if f.kind == "attention"]
     levels = [f.severity or "low" for f in attention] + [
         _surface_severity(level, items) for level, items in _by_level(surfaces or [])
-    ]
+    ] + [r["severity"] for r in system.get("risks") or []]
     severity = min(levels, key=lambda s: _SEVERITY_RANK.get(s, 2), default="low")
     flows = [(entries, members) for entries, members in _flows(behavior_facts) if entries]
     sentences: list[str] = [f"Overall impact: {severity}."]
-    if flows:
+    if system:
+        from app.explanation.architecture import blast_radius_sentence
+
+        sentences.append(blast_radius_sentence(system))
+        risks = system.get("risks") or []
+        if risks:
+            counts_r = {lvl: sum(1 for r in risks if r["severity"] == lvl) for lvl in ("high", "medium")}
+            detail = ", ".join(f"{n} {lvl}" for lvl, n in counts_r.items() if n)
+            sentences.append(
+                f"{len(risks)} risk{'s' if len(risks) != 1 else ''} need{'s' if len(risks) == 1 else ''} attention ({detail}): "
+                + "; ".join(r["title"].lower() for r in risks[:3]) + "."
+            )
+    if flows and not system:
         names = sorted({humanize(name) for entries, _ in flows for name in entries})
         sentences.append(
             f"{len(names)} flow{'s' if len(names) != 1 else ''} reach the changed behavior ({_list(names, 5)})."
         )
     counts = {level: sum(1 for f in attention if (f.severity or "low") == level) for level in ("high", "medium")}
-    if attention:
+    if attention and not system:
         parts = [f"{n} {level}" for level, n in counts.items() if n]
         sentences.append(
             f"The analysis found {len(attention)} finding{'s' if len(attention) != 1 else ''} that need{'s' if len(attention) == 1 else ''} attention"
             + (f" ({', '.join(parts)})." if parts else ".")
         )
     untested = [members for entries, members in flows if all(not fact.tests for fact in members)]
-    if untested:
+    if untested and not system:
         sentences.append(
             "No test exercises the changed behavior." if len(untested) == len(flows) else "Some of these flows have no test for the changed behavior."
         )

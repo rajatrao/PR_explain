@@ -510,7 +510,7 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
       ) : null}
       {areas.length ? (
         <details className="summary-details">
-          <summary>By flow and interface ({areas.length})</summary>
+          <summary>Risks, flows and interfaces ({areas.length})</summary>
       {areas.map((area) => (
         <div className="behavior-card" key={area.title}>
           <h4 className="behavior-title">
