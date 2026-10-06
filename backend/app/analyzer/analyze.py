@@ -628,9 +628,16 @@ def analyze(
         {"impact_count": impact_count},
     )
 
+    removed_names = {
+        claim.subject
+        for claim in claims
+        if claim.kind == "behavior_changed" and "is defined at the base commit and is not defined at the head commit" in claim.text
+    }
     review_signals(
         snapshot,
         functions=functions,
+        calls=calls,
+        removed_names=removed_names,
         resolved_calls=resolved_calls,
         unresolved_sites=unresolved_sites,
         relationships=relationships,

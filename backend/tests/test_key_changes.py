@@ -45,7 +45,9 @@ def test_key_changes_rank_removed_first_and_say_what_callers_see():
     rows, details = _with_outside_caller("    charge(order)")
     key = rows["Key Changes"]
     assert [row["label"] for row in key[:2]] == ["legacy_refund (removed)", "charge"]
-    assert key[0]["value"].startswith("Removed by this pull request.")
+    assert key[0]["value"].startswith("Removed from app/billing.py (base line 40).")
+    assert "It was `def legacy_refund(order)`." in key[0]["value"]
+    assert key[0]["value"].endswith("No plain call to it remains in the analyzed files at the head commit.")
     charge = key[1]["value"]
     assert charge.startswith("Changes its inputs, failures, result")
     assert "charge now takes currency" in charge
@@ -81,3 +83,67 @@ def test_missing_required_parameter_is_detected_by_position_and_keyword():
     assert _missing_required("createSession(userId, 3600)", header, added, "src/session.ts") == []
     assert _missing_required("createSession(...args)", header, added, "src/session.ts") == []
     assert _passes_param("charge(order, currency='EUR')", "def charge(order, retries=5, *, currency='USD'):", "currency", "a.py")
+
+
+def test_nested_callbacks_and_moved_functions_are_not_reported_as_removed():
+    from app.analyzer.behavior import extract_behavior_deltas
+    from app.analyzer.types import FileChange
+
+    patch = (
+        "@@ -1,8 +1,4 @@\n"
+        " export function render(items) {\n"
+        "-  const onClick = () => {\n"
+        "-    track(items);\n"
+        "-  };\n"
+        "   return items.length;\n"
+        " }\n"
+        "-export function formatDate(d) {\n"
+        "-  return d.toISOString();\n"
+        "-}\n"
+    )
+    moved = "@@ -0,0 +1,3 @@\n+export function formatDate(d) {\n+  return d.toISOString();\n+}\n"
+    deltas = extract_behavior_deltas(
+        [FileChange(path="src/view.ts", status="modified", patch=patch), FileChange(path="src/dates.ts", status="added", patch=moved)],
+        [_fn("r", "render", "src/view.ts", 1, 4), _fn("f", "formatDate", "src/dates.ts", 1, 3)],
+    )
+    assert not [d for d in deltas if d.category == "removed_function"]
+
+
+def test_removed_function_still_called_at_head_is_ranked_first_with_the_call_site():
+    from app.analyzer.types import Claim
+
+    symbols, relationships, claims, evidences = __import__("tests.test_behavior_comparison", fromlist=["_facts"])._facts()
+    evidences.append(
+        Evidence(id="ev_dangling", type="source_span", repo="acme/shop", commit_sha="b" * 40, file="app/refunds.py",
+                 start_line=12, end_line=12, symbol="legacy_refund", description="dangling_call", snippet="legacy_refund(order)")
+    )
+    claims.append(
+        Claim(id="cl_dangling", epistemic="FACT", kind="dangling_call",
+              text="app/refunds.py:12 still calls legacy_refund, which this pull request removes.",
+              subject="legacy_refund", evidence_ids=["ev_dangling"])
+    )
+    details = build_details(
+        symbols=symbols, relationships=relationships, evidences=evidences, claims=claims, sections=[], repo="acme/shop", sha="b" * 40
+    )
+    key = next(section["rows"] for section in details["sections"] if section["title"] == "Key Changes")
+    assert key[0]["label"] == "legacy_refund (removed)"
+    assert "Still called at the head commit in app/refunds.py:12; that call no longer resolves to a definition." in key[0]["value"]
+    assert key[0]["href"].endswith("app/refunds.py#L12")
+
+
+def test_private_removed_helpers_are_not_key_changes():
+    patch = "@@ -1,3 +0,0 @@\n-def _old_helper(x):\n-    return x\n-\n"
+    from app.analyzer.analyze import _behavior_claims
+    from app.analyzer.types import FileChange, Snapshot
+
+    snapshot = Snapshot(repository="acme/shop", base_sha="a" * 40, head_sha="b" * 40, files={},
+                        changes=[FileChange(path="app/util.py", status="modified", patch=patch)])
+    claims, evidences = [], []
+    from app.analyzer.types import Claim
+
+    _behavior_claims(snapshot, [], lambda **k: claims.append(Claim(**k)) or claims[-1],
+                     lambda **k: evidences.append(Evidence(**k)) or evidences[-1])
+    assert claims, "the analyzer still records the removal"
+    details = build_details(symbols=[], relationships=[], evidences=evidences, claims=claims, sections=[], repo="acme/shop", sha="b" * 40)
+    key = next(section["rows"] for section in details["sections"] if section["title"] == "Key Changes")
+    assert all("(removed)" not in row["label"] for row in key)

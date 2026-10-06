@@ -138,6 +138,18 @@ def extract_behavior_deltas(
         if symbol.kind == "function":
             by_file.setdefault(symbol.file_path, []).append(symbol)
 
+    # A function is removed only when no file defines it at the head commit, so a function that
+    # moved to another file, or was re-added in another hunk, is not reported as removed.
+    defined_at_head = {symbol.name for symbol in functions if symbol.kind == "function"}
+    for change in changes:
+        if change.patch is None or (skip_path and skip_path(change.path)):
+            continue
+        for block in _blocks(change.patch)[0]:
+            for line in block.added:
+                name = _header_name(line.text)
+                if name:
+                    defined_at_head.add(name)
+
     deltas: list[BehaviorDelta] = []
     for change in changes:
         if change.patch is None or (skip_path and skip_path(change.path)):
@@ -154,12 +166,18 @@ def extract_behavior_deltas(
                 name = _header_name(line.text)
                 if name and name not in head_names and name not in removed_functions:
                     removed_functions[name] = line
+                    if name in defined_at_head or not _top_level_definition(line):
+                        # Still defined somewhere at head, or a nested callback/local helper: not a removal
+                        # a caller can notice. Its lines are still kept out of the owner's statement pairs.
+                        line.kind = "not_removed"
             owner = _owner(block, head_functions)
             key = owner.id if owner else None
             owners[key] = owner
             grouped.setdefault(key, []).append(block)
 
         for name, line in removed_functions.items():
+            if line.kind == "not_removed":
+                continue
             deltas.append(
                 BehaviorDelta(
                     file_path=change.path,
@@ -345,6 +363,13 @@ def _meaningful(text: str) -> bool:
     if _COMMENT.match(text) or _TRIVIAL.match(text) or _IMPORT.match(text):
         return False
     return True
+
+
+def _top_level_definition(line: "_Line") -> bool:
+    """A module-level function or a class method; not a callback or helper nested in a body."""
+    if _HEADER.match(line.text) and _HEADER.match(line.text).group("arrow"):
+        return line.indent == 0
+    return line.indent <= 4
 
 
 def _header_name(text: str) -> str | None:
