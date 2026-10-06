@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import mermaid from "mermaid";
-import { getRun, requestExplanation, retryRun } from "./api";
+import { getRun, retryRun } from "./api";
 import type {
   ChangeFlowDiagram,
   FileChange,
@@ -17,13 +17,13 @@ mermaid.initialize({
   flowchart: { htmlLabels: true, curve: "basis" },
 });
 
-const TABS = ["quick", "deep", "review"] as const;
+const TABS = ["explain", "details", "review"] as const;
 
 type TabId = (typeof TABS)[number];
 
 const TAB_LABEL: Record<TabId, string> = {
-  quick: "Explain",
-  deep: "Details",
+  explain: "Explain",
+  details: "Details",
   review: "Review",
 };
 
@@ -59,8 +59,7 @@ function githubTarget(run: RunDetail): { href: string; label: string } | null {
 export function RunPage({ id }: { id: string }) {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabId>("quick");
-  const [depth, setDepth] = useState("quick");
+  const [tab, setTab] = useState<TabId>("explain");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -76,8 +75,7 @@ export function RunPage({ id }: { id: string }) {
           next.analysis_status === "running" ||
           next.explanation_status === "queued" ||
           next.explanation_status === "running" ||
-          next.comment_status === "queued" ||
-          next.explanations[depth]?.status === "queued";
+          next.comment_status === "queued";
         if (pending) timer = window.setTimeout(load, 2000);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load the run");
@@ -88,14 +86,12 @@ export function RunPage({ id }: { id: string }) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [id, depth, busy]);
+  }, [id, busy]);
 
   if (error) return <p className="error">{error}</p>;
   if (!run) return <p>Loading explanation…</p>;
 
-  const explanation = run.explanations[depth];
   const failedPhase = failedRunPhase(run);
-  const viewLabel = TAB_LABEL[depth as TabId] || depth;
   const github = githubTarget(run);
 
   async function retry() {
@@ -105,19 +101,6 @@ export function RunPage({ id }: { id: string }) {
       setRun(await retryRun(run!.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not retry the run");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function generate(nextDepth: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      await requestExplanation(run!.id, nextDepth);
-      setDepth(nextDepth);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not queue the explanation");
     } finally {
       setBusy(false);
     }
@@ -168,16 +151,7 @@ export function RunPage({ id }: { id: string }) {
             role="tab"
             aria-selected={item === tab}
             className={item === tab ? "tab active" : "tab"}
-            onClick={() => {
-              setTab(item);
-              if (item === "review") return;
-              setDepth(item);
-              const existing = run.explanations[item];
-              const pending = existing?.status === "queued" || existing?.status === "running";
-              if ((!existing || existing.status !== "succeeded" || !existing.document) && !pending) {
-                void generate(item);
-              }
-            }}
+            onClick={() => setTab(item)}
           >
             {TAB_LABEL[item]}
           </button>
@@ -188,25 +162,18 @@ export function RunPage({ id }: { id: string }) {
         <div>
           {tab === "review" ? (
             <ReviewView run={run} />
-          ) : run.analysis_status === "succeeded" && tab === "quick" ? (
+          ) : run.analysis_status === "succeeded" && tab === "explain" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
               {run.change_flow_diagram?.legend ? <p className="kicker diagram-legend">{run.change_flow_diagram.legend}</p> : null}
               <BehavioralChangesSection section={run.behavioral_changes} />
               <ImpactSection section={run.impact} />
             </>
-          ) : run.analysis_status === "succeeded" && tab === "deep" ? (
+          ) : run.analysis_status === "succeeded" && tab === "details" ? (
             <DetailsView run={run} />
           ) : run.analysis_status === "failed" ? null : (
             <section className="narrative">
-              <p>
-                {explanation?.status === "failed"
-                  ? explanation.error || "This depth failed validation."
-                  : `No ${viewLabel} narration yet.`}
-              </p>
-              <button type="button" className="primary" onClick={() => generate(depth)} disabled={busy}>
-                Generate {viewLabel}
-              </button>
+              <p>The analysis of this commit is still running.</p>
             </section>
           )}
         </div>
@@ -229,16 +196,16 @@ function failedRunPhase(run: RunDetail): { phase: "analysis" | "explanation" | "
     "The analysis did not finish.",
   );
   if (analysis) return { phase: "analysis", title: "Analysis failed.", detail: analysis };
-  const quickStillFailed =
-    run.explanations.quick?.status === "failed" &&
+  const stillFailed =
+    run.explanation?.status === "failed" &&
     run.explanation_status !== "queued" &&
     run.explanation_status !== "running"
-      ? run.explanations.quick.error || "Explanation failed."
+      ? run.explanation.error || "Explanation failed."
       : null;
   const explanation = phaseFailure(
     run.explanation_status,
-    run.explanation_error || run.explanations.quick?.error,
-    unresolvedStageFailure(run, PHASE_STAGES.explanation) || quickStillFailed,
+    run.explanation_error || run.explanation?.error,
+    unresolvedStageFailure(run, PHASE_STAGES.explanation) || stillFailed,
     "The model did not return a validated document.",
   );
   if (explanation) return { phase: "explanation", title: "Explanation failed.", detail: explanation };

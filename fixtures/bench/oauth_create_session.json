@@ -22,7 +22,6 @@
       "title": "Add ttl to shared session creation",
       "body": "All login methods should share createSession. This description is author narrative and is not a fact."
     },
-    "depth": "developer",
     "claims": [
       {
         "id": "cl_changed_sym_src_session_ts_createSession_1",

@@ -170,7 +170,6 @@ class AnalysisJob(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id", ondelete="CASCADE"), index=True)
     phase: Mapped[str] = mapped_column(String(32))
-    depth: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -283,11 +282,10 @@ class ClaimSupport(Base):
 
 class ExplanationPacketRow(Base):
     __tablename__ = "explanation_packets"
-    __table_args__ = (UniqueConstraint("run_id", "depth", name="uq_packet_run_depth"),)
+    __table_args__ = (UniqueConstraint("run_id", name="uq_packet_run"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id", ondelete="CASCADE"))
-    depth: Mapped[str] = mapped_column(String(32))
     payload: Mapped[dict] = mapped_column(JSON)
     selection_notes: Mapped[list] = mapped_column(JSON, default=list)
     run: Mapped[AnalysisRun] = relationship(back_populates="packets")
@@ -295,11 +293,10 @@ class ExplanationPacketRow(Base):
 
 class ExplanationRow(Base):
     __tablename__ = "explanations"
-    __table_args__ = (UniqueConstraint("run_id", "depth", name="uq_explanation_run_depth"),)
+    __table_args__ = (UniqueConstraint("run_id", name="uq_explanation_run"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_uuid)
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("analysis_runs.id", ondelete="CASCADE"))
-    depth: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32))
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(255), nullable=True)

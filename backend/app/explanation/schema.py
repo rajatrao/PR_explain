@@ -5,7 +5,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.json_schema import SkipJsonSchema
 
-ExplanationDepth = Literal["quick", "developer", "deep", "architecture"]
 Epistemic = Literal["FACT", "INFERENCE", "UNKNOWN"]
 
 
@@ -154,7 +153,6 @@ class ExplanationPacket(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     revision: RevisionRef
-    depth: ExplanationDepth
     claims: list[ClaimRef] = Field(default_factory=list)
     symbols: list[SymbolRef] = Field(default_factory=list)
     relationships: list[RelationshipRef] = Field(default_factory=list)

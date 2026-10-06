@@ -5,12 +5,11 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from app.config import Settings
-from app.explanation.schema import ExplanationDepth, ExplanationPacket
+from app.explanation.schema import ExplanationPacket
 
 
 class ExplainRequest(BaseModel):
     packet: ExplanationPacket
-    depth: ExplanationDepth
     system_prompt: str
     user_prompt: str
     json_schema: dict

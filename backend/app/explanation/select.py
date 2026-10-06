@@ -9,7 +9,6 @@ from app.explanation.schema import (
     ClaimRef,
     ContextNote,
     EvidenceRef,
-    ExplanationDepth,
     ExplanationPacket,
     ImpactRef,
     RelationshipRef,
@@ -38,93 +37,63 @@ _PRIORITY = {
     "file_reason": 6,
 }
 
-# Same analysis, two slices. Kinds outside the set are omitted even when the budget can hold them.
-# Older developer and architecture packets use the deep slice.
+# The packet carries these claim kinds; others are omitted even when the budget can hold them.
 _INCLUDED = {
-    "quick": {
-        "symbol_changed",
-        "file_changed",
-        "missing_test",
-        "tests",
-        "reaches_changed",
-        "changed_symbol_cap",
-        "diff_only",
-    },
-    "deep": {
-        "symbol_changed",
-        "behavior_changed",
-        "file_changed",
-        "calls",
-        "tests",
-        "missing_test",
-        "dependency_changed",
-        "file_reason",
-        "file_absent",
-        "behavior_unchanged",
-        "reaches_changed",
-        "ambiguous_call",
-        "fanout_truncated",
-        "diff_only",
-        "changed_symbol_cap",
-        "defines_api",
-    },
+    "symbol_changed",
+    "file_changed",
+    "missing_test",
+    "tests",
+    "reaches_changed",
+    "changed_symbol_cap",
+    "diff_only",
 }
 
 
 def build_packet(
     result: AnalysisResult,
     snapshot: Snapshot,
-    depth: ExplanationDepth,
     budget: int,
 ) -> ExplanationPacket:
     ranked = sorted(
         result.claims,
-        key=lambda claim: (_rank(claim.kind, depth), claim.id),
+        key=lambda claim: (_rank(claim.kind), claim.id),
     )
-    candidates = [claim for claim in ranked if _rank(claim.kind, depth) < 100]
-    omitted_for_depth = [claim for claim in ranked if _rank(claim.kind, depth) >= 100]
+    candidates = [claim for claim in ranked if _rank(claim.kind) < 100]
+    omitted = [claim for claim in ranked if _rank(claim.kind) >= 100]
     notes = [ContextNote(code="analyzer", text=note) for note in result.context_notes]
-    if omitted_for_depth:
+    if omitted:
         notes.append(
             ContextNote(
-                code="depth_slice",
-                text=f"{len(omitted_for_depth)} claims omitted for the {depth} depth.",
+                code="slice",
+                text=f"{len(omitted)} claims of other kinds are omitted from the packet.",
             )
         )
 
-    selected = _fit(result, snapshot, depth, candidates, notes, budget)
-    packet = _materialize(result, snapshot, depth, selected, notes)
-    if _slice(depth) == "quick":
-        # Behavior facts carry their own size cap and are added after the claim budget is fitted.
-        packet.behavior_facts = build_behavior_facts(
-            symbols=result.symbols,
-            relationships=result.relationships,
-            claims=result.claims,
-            evidences=result.evidences,
-        )
-        packet.impact_facts = build_impact_facts(
-            claims=result.claims, evidences=result.evidences, behavior_facts=packet.behavior_facts
-        )
+    selected = _fit(result, snapshot, candidates, notes, budget)
+    packet = _materialize(result, snapshot, selected, notes)
+    # Behavior facts carry their own size cap and are added after the claim budget is fitted.
+    packet.behavior_facts = build_behavior_facts(
+        symbols=result.symbols,
+        relationships=result.relationships,
+        claims=result.claims,
+        evidences=result.evidences,
+    )
+    packet.impact_facts = build_impact_facts(
+        claims=result.claims, evidences=result.evidences, behavior_facts=packet.behavior_facts
+    )
     return packet
 
 
-def _slice(depth: str) -> str:
-    if depth in {"developer", "architecture"}:
-        return "deep"
-    return depth
-
-
-def _rank(kind: str, depth: str) -> int:
-    included = _INCLUDED.get(_slice(depth))
-    if included is not None and kind not in included:
+def _rank(kind: str) -> int:
+    if kind not in _INCLUDED:
         return 100
     return _PRIORITY.get(kind, 7)
 
 
-def _fit(result, snapshot, depth, candidates, notes: list[ContextNote], budget: int):
+def _fit(result, snapshot, candidates, notes: list[ContextNote], budget: int):
     selected = []
     for index, claim in enumerate(candidates):
-        trial = _materialize(result, snapshot, depth, selected + [claim], notes)
+        trial = _materialize(result, snapshot, selected + [claim], notes)
         if len(trial.model_dump_json()) > budget and selected:
             remaining = candidates[index:]
             notes.append(
@@ -146,7 +115,7 @@ def _fit(result, snapshot, depth, candidates, notes: list[ContextNote], budget: 
     return selected
 
 
-def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) -> ExplanationPacket:
+def _materialize(result, snapshot, selected, notes: list[ContextNote]) -> ExplanationPacket:
     selected_ids = {claim.id for claim in selected}
     evidence_by_id = {item.id: item for item in result.evidences}
     used_evidence: set[str] = set()
@@ -167,31 +136,14 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
 
     symbol_ids: set[str] = set()
     relationships: list[RelationshipRef] = []
-    for rel in result.relationships:
-        if not _keep_relationship(rel, selected, depth):
-            continue
-        symbol_ids.add(rel.source_id or "")
-        symbol_ids.add(rel.target_id or "")
-        if rel.evidence_id and rel.evidence_id in evidence_by_id:
-            used_evidence.add(rel.evidence_id)
-        relationships.append(
-            RelationshipRef(
-                id=rel.id,
-                type=rel.type,
-                source=rel.source_name,
-                target=rel.target_name,
-                source_file=rel.source_file,
-                target_file=rel.target_file,
-                evidence_id=rel.evidence_id,
-            )
-        )
+    # The packet carries no relationships; changed symbols and their facts are enough for the summary.
     for claim in selected:
         if not claim.subject:
             continue
         for symbol in result.symbols:
             if symbol.name != claim.subject:
                 continue
-            if depth == "quick" and not symbol.changed:
+            if not symbol.changed:
                 continue
             symbol_ids.add(symbol.id)
 
@@ -256,7 +208,7 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
             ),
             None,
         )
-        if claim is None and depth == "quick":
+        if claim is None:
             continue
         if claim is None and not any(item.subject == rel.target_name for item in selected):
             continue
@@ -286,19 +238,6 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
         if claim.epistemic == "UNKNOWN"
     ]
     packet_notes = list(notes)
-    boundary_claims = _boundary_claims(selected) if _slice(depth) == "deep" else []
-    if boundary_claims:
-        claims.extend(boundary_claims)
-        unknowns.extend(
-            UnknownRef(id=f"unk_{claim.id}", text=claim.text, claim_id=claim.id)
-            for claim in boundary_claims
-        )
-        packet_notes.append(
-            ContextNote(
-                code="no_boundary",
-                text=" ".join(claim.text for claim in boundary_claims),
-            )
-        )
     return ExplanationPacket(
         revision=RevisionRef(
             repository=snapshot.repository,
@@ -308,7 +247,6 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
             title=snapshot.pr_title,
             body=snapshot.pr_body,
         ),
-        depth=depth,
         claims=claims,
         symbols=symbols,
         relationships=relationships,
@@ -320,54 +258,4 @@ def _materialize(result, snapshot, depth, selected, notes: list[ContextNote]) ->
     )
 
 
-def _boundary_claims(selected) -> list[ClaimRef]:
-    """UNKNOWN claims for architecture facts the analysis did not produce."""
-    gaps = []
-    if not any(claim.kind == "defines_api" for claim in selected):
-        gaps.append(("api", "No exported API facts are in this packet."))
-    if not any(claim.kind == "dependency_changed" for claim in selected):
-        gaps.append(("dependency", "No dependency facts are in this packet."))
-    gaps.append(("database", "No database or schema facts are in this packet."))
-    gaps.append(("external", "No external system facts are in this packet."))
-    return [
-        ClaimRef(
-            id=f"cl_unknown_boundary_{code}",
-            epistemic="UNKNOWN",
-            kind="unknown_boundary",
-            text=text,
-            subject=None,
-            evidence_ids=[],
-        )
-        for code, text in gaps
-    ]
 
-
-def _keep_relationship(rel, selected, depth: str) -> bool:
-    subjects = {claim.subject for claim in selected if claim.subject}
-    changed_names = {
-        claim.subject
-        for claim in selected
-        if claim.kind == "symbol_changed" and claim.subject
-    }
-    changed_files: set[str] = set()
-    for claim in selected:
-        if claim.kind == "file_changed" and claim.subject:
-            changed_files.add(claim.subject)
-        if claim.kind == "symbol_changed" and " changed in " in claim.text:
-            changed_files.add(claim.text.split(" changed in ", 1)[1].rstrip("."))
-    if _slice(depth) == "quick":
-        return False
-    if _slice(depth) != "deep":
-        return False
-    if rel.type in {"DEFINES_API", "DEPENDS_ON"}:
-        return True
-    if rel.type == "TESTS":
-        return rel.target_name in subjects or rel.target_name in changed_names
-    if rel.type not in {"CALLS", "IMPORTS"}:
-        return False
-    return (
-        rel.source_name in changed_names
-        or rel.target_name in changed_names
-        or (rel.source_file or "") in changed_files
-        or (rel.target_file or "") in changed_files
-    )

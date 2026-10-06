@@ -122,7 +122,6 @@ def run_bench(directory: Path, report_path: Path, settings) -> dict:
         packet = ExplanationPacket.model_validate(fixture["packet"])
         request = ExplainRequest(
             packet=packet,
-            depth=packet.depth,
             system_prompt=system_prompt(),
             user_prompt=build_user_message(packet),
             json_schema=ExplanationDocument.model_json_schema(),

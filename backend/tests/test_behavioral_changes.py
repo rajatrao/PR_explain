@@ -391,38 +391,6 @@ def test_areas_and_judgments_the_facts_do_not_show_are_dropped():
         assert any(expected in reason for reason in reasons), (expected, reasons)
 
 
-def test_retry_recovers_a_narrative_that_was_dropped():
-    import json
-    from types import SimpleNamespace
-
-    from app.explanation.schema import ExplanationDocument
-    from app.jobs.pipeline import _retry_narratives
-
-    good = _good_narrative().model_dump()
-
-    class Provider:
-        def __init__(self):
-            self.requests = []
-
-        def explain(self, request):
-            self.requests.append(request)
-            return SimpleNamespace(content=json.dumps({"behavioral_changes": good}), model="m")
-
-    packet = SimpleNamespace(behavior_facts=_facts(), impact_facts=[])
-    document = ExplanationDocument(summary="s")
-    provider = Provider()
-    screening = ["dropped 'Password resets': shares no subject with the facts it cites"]
-    import app.jobs.pipeline as pipeline
-
-    original = pipeline._request
-    pipeline._request = lambda packet, depth, errors: SimpleNamespace(errors=errors)
-    try:
-        _retry_narratives(provider, packet, "quick", document, screening, [])
-    finally:
-        pipeline._request = original
-    assert document.behavioral_changes is not None and document.behavioral_changes.changes
-    assert any("Password resets" in error for error in provider.requests[0].errors)
-
 
 def test_overall_behavior_summary_is_flow_level_and_has_no_code():
     from app.explanation.plain_summary import behavior_overview

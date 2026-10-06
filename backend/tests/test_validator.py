@@ -18,7 +18,6 @@ def _packet() -> ExplanationPacket:
             head_sha="b" * 40,
             base_sha="a" * 40,
         ),
-        depth="developer",
         claims=[
             ClaimRef(
                 id="cl_fact",

@@ -15,7 +15,6 @@
       "title": "Docs only",
       "body": null
     },
-    "depth": "developer",
     "claims": [
       {
         "id": "cl_diff_only",

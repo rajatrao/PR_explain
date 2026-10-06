@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.explanation.narrate import compose_document
+from app.explanation.narrate import compose_full_document
 from app.explanation.schema import ExplanationDocument, ExplanationPacket
 from app.llm.provider import ExplainRequest, ExplanationCallError, LLMResult
 
@@ -25,4 +25,4 @@ class ScriptedProvider:
 
 
 def document_from_packet(packet: ExplanationPacket) -> ExplanationDocument:
-    return compose_document(packet)
+    return compose_full_document(packet)

@@ -88,7 +88,7 @@ def test_explanation_failure_keeps_claims_and_retry_does_not_refetch(db):
     assert any(row.subject == "createSession" and row.kind == "calls" for row in stored.claims) or any(
         "calls createSession" in row.text for row in stored.claims
     )
-    enqueue_job(db, run.id, "explain", "quick")
+    enqueue_job(db, run.id, "explain")
     db.commit()
     process_available_job(db, settings, snapshot_source=source, provider=failed, comment_client=MemoryComments())
     assert source.calls == 1
@@ -169,7 +169,7 @@ def test_empty_statements_keep_packet_explanation(db):
     assert stored.explanation_status == "succeeded"
     assert stored.explanation_error is None
     assert stored.comment_status == "posted"
-    document = next(row.document for row in stored.explanations if row.depth == "quick")
+    document = next(row.document for row in stored.explanations)
     rendered = json.dumps(document)
     assert document["change_flow"]
     assert "createSession" in rendered
@@ -432,11 +432,8 @@ def test_comment_retry_does_not_call_the_provider(db):
     assert body["explanation_status"] == "succeeded"
     assert body["comment_status"] == "queued"
     assert body["comment_error"] is None
-    assert body["depths"] == ["quick", "deep"]
-    assert "developer" not in body["explanations"]
-    assert "architecture" not in body["explanations"]
-    assert body["explanations"]["quick"]["document"]["summary"]
-    assert body["explanations"]["deep"]["document"]["summary"]
+    assert "depths" not in body and "explanations" not in body
+    assert body["explanation"]["document"]["summary"]
 
     db.expire_all()
     comment_job = db.scalars(

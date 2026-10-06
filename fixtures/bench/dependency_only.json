@@ -18,7 +18,6 @@
       "title": "Bump a dependency",
       "body": "Manifest only."
     },
-    "depth": "developer",
     "claims": [
       {
         "id": "cl_diff_only",
