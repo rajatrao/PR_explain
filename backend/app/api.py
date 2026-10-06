@@ -410,6 +410,9 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
                     relationships=run.relationships_,
                     claims=run.claims,
                     evidences=run.evidences,
+                    repo=repository.full_name,
+                    base_sha=revision.base_sha,
+                    head_sha=revision.head_sha,
                 )
             ),
             prescreened=True,

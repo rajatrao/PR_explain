@@ -60,10 +60,13 @@ def render_pull_request_comment(
     del bullets  # The Explain view no longer carries a summary section.
     parts = [marker, heading, ""]
     _append_mermaid(parts, mermaid)
+    links = {"repo": repo_full_name, "base_sha": base_sha, "head_sha": head_sha}
     _append_behavioral_changes(
-        parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
+        parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence, **links
     )
-    _append_impact(parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
+    _append_impact(
+        parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence, **links
+    )
     parts.append(footer)
     body = "\n\n".join(part for part in parts if part is not None)
     if len(body) <= _LIMIT:
@@ -175,11 +178,12 @@ def render_combined_comment(
     explain_parts = [marker, explain_heading, ""]
     _append_mermaid(explain_parts, mermaid)
     flow_parts: list[str] = []
+    links = {"repo": repo_full_name, "base_sha": base_sha, "head_sha": head_sha}
     _append_behavioral_changes(
-        flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
+        flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence, **links
     )
     _append_impact(
-        flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence
+        flow_parts, document=document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence, **links
     )
     built = build_details(
         symbols=symbols or [],
@@ -508,12 +512,17 @@ def _append_flow_diagrams(parts: list[str], *, symbols, relationships, claims, e
         parts.append(flows)
 
 
-def _append_behavioral_changes(parts: list[str], *, document, symbols, relationships, claims, evidence) -> None:
+def _append_behavioral_changes(
+    parts: list[str], *, document, symbols, relationships, claims, evidence, repo=None, base_sha=None, head_sha=None
+) -> None:
     facts = build_behavior_facts(
         symbols=symbols or [],
         relationships=relationships or [],
         claims=claims or [],
         evidences=evidence or [],
+        repo=repo,
+        base_sha=base_sha,
+        head_sha=head_sha,
     )
     narrative = getattr(document, "behavioral_changes", None) if document is not None else None
     reasons = list(getattr(document, "behavior_screening", None) or []) if document is not None else []
@@ -521,12 +530,17 @@ def _append_behavioral_changes(parts: list[str], *, document, symbols, relations
     parts.append(render_behavioral_changes_markdown(section))
 
 
-def _append_impact(parts: list[str], *, document, symbols, relationships, claims, evidence) -> None:
+def _append_impact(
+    parts: list[str], *, document, symbols, relationships, claims, evidence, repo=None, base_sha=None, head_sha=None
+) -> None:
     behavior_facts = build_behavior_facts(
         symbols=symbols or [],
         relationships=relationships or [],
         claims=claims or [],
         evidences=evidence or [],
+        repo=repo,
+        base_sha=base_sha,
+        head_sha=head_sha,
     )
     impact_facts = build_impact_facts(claims=claims or [], evidences=evidence or [], behavior_facts=behavior_facts)
     narrative = getattr(document, "impact", None) if document is not None else None

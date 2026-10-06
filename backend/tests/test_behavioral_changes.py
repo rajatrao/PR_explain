@@ -238,3 +238,89 @@ def test_combined_comment_puts_behavioral_on_explain_not_details():
     assert "### Behavioral Changes" not in details
     assert "### System Flow Change" not in body
     assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
+
+
+def _one(title, before, after, impact="", fact_ids=("b1",)):
+    return BehavioralNarrative(
+        changes=[{"title": title, "before": before, "after": after, "impact": impact, "fact_ids": list(fact_ids)}]
+    )
+
+
+def test_hallucinated_claims_are_dropped():
+    cases = {
+        # a number that no fact contains
+        "stated the number 500": _one(
+            "Order totals", "Previously, an order with total <= 0 was rejected.", "With this change, it returns status 500."
+        ),
+        # a quoted value that no fact contains
+        "quoted": _one(
+            "Order totals",
+            "Previously, an empty order was rejected.",
+            'With this change, the client sees "payment declined".',
+        ),
+        # a failure the cited fact (an added audit call) does not show
+        "claimed a failure": _one(
+            "Audit trail for charges",
+            "Previously, charging an order left no audit record.",
+            "With this change, charging fails when the audit record cannot be written.",
+            fact_ids=("b3",),
+        ),
+        # a subject the cited facts never mention
+        "shares no subject": _one(
+            "Password resets",
+            "Previously, password reset emails were sent immediately.",
+            "With this change, password reset emails are queued.",
+            fact_ids=("b3",),
+        ),
+    }
+    for expected, narrative in cases.items():
+        reasons: list[str] = []
+        assert screen_narrative(narrative, _facts(), reasons) is None, expected
+        assert any(expected in reason for reason in reasons), (expected, reasons)
+
+
+def test_who_notices_may_name_only_entry_points_that_reach_the_cited_change():
+    facts = _facts()
+    facts.append(
+        BehaviorFunctionFact(
+            function="refresh",
+            file="app/tokens.py",
+            public=True,
+            reached_from=["refresh_token"],
+            changes=[BehaviorChangeFact(id="b9", claim_id="c9", kind="value", before="ttl = 60", after="ttl = 120")],
+        )
+    )
+    wrong = _one(
+        "Audit trail for charges",
+        "Previously, charging an order left no audit record.",
+        "With this change, every charge also leaves an audit record.",
+        impact="Anything entering through `refresh_token`.",
+        fact_ids=("b3",),
+    )
+    reasons: list[str] = []
+    assert screen_narrative(wrong, facts, reasons) is None
+    assert "does not reach the cited change" in reasons[-1]
+
+
+def test_numbers_and_failures_backed_by_the_facts_are_kept():
+    kept = _one(
+        "Empty and negative orders at checkout",
+        "Previously, an order with total <= 0 was rejected as an empty order.",
+        "With this change, only a total below 0 is rejected as an invalid order.",
+    )
+    assert screen_narrative(kept, _facts()) is not None
+
+
+def test_section_links_each_change_to_the_diff_lines_it_rests_on():
+    facts = _facts()
+    facts[0].changes[0].location = "app/billing.py:13"
+    facts[0].changes[0].href = "https://github.com/acme/shop/blob/bbb/app/billing.py#L13"
+    section = build_behavioral_section(narrative=_good_narrative(), facts=facts, prescreened=True)
+    assert section["changes"][0]["evidence"] == [
+        {"label": "app/billing.py:13", "href": "https://github.com/acme/shop/blob/bbb/app/billing.py#L13"}
+    ]
+    markdown = render_behavioral_changes_markdown(section)
+    assert "- **Evidence:** [`app/billing.py:13`](https://github.com/acme/shop/blob/bbb/app/billing.py#L13)" in markdown
+    # A stored narrative is screened again: one that no longer matches the facts is not shown.
+    stale = _one("Password resets", "Previously, reset emails were sent.", "With this change, they are queued.", fact_ids=("b3",))
+    assert build_behavioral_section(narrative=stale, facts=facts, prescreened=True)["changes"] == []

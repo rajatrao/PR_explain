@@ -246,3 +246,17 @@ def test_missing_impact_summary_shows_a_notice_with_the_reason():
     assert section["overview"].endswith("Reason: the model returned no impact.")
     assert render_impact_markdown(section).startswith("### Impact\n\nAn impact summary is not available")
 
+
+
+def test_impact_area_about_something_the_facts_never_mention_is_dropped():
+    facts = _summary_facts()
+    cited = [fact.id for fact in facts][:1]
+    narrative = {
+        "overview": "",
+        "areas": [
+            {"title": "Billing database", "severity": "low", "summary": "Invoices are stored in a new ledger table.", "fact_ids": cited}
+        ],
+    }
+    reasons: list[str] = []
+    assert screen_impact(narrative, [_charge(), _session()], facts, reasons) is None
+    assert any("shares no subject" in reason or "not in the cited facts" in reason for reason in reasons), reasons
