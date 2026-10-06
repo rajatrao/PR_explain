@@ -128,6 +128,7 @@ def build_behavioral_section(
     prescreened: bool = False,
     reasons: list[str] | None = None,
     surfaces: list[dict] | None = None,
+    system: dict | None = None,
 ) -> dict:
     """The section the Explain tab and the comment show.
 
@@ -146,9 +147,9 @@ def build_behavioral_section(
     fact_count = sum(len(fact.changes) for fact in facts)
     # The overall summary is written by rule from the PR's facts, so it cannot claim anything the diff
     # does not show; the items below it are the model's (when they pass the checks) or the rule's.
-    summary = behavior_overview(facts, surfaces)
+    summary = behavior_overview(facts, surfaces, system)
     if chosen is None or not chosen.changes:
-        rule_changes = _rule_changes(facts, surfaces)
+        rule_changes = _rule_changes(facts, surfaces, system)
         if rule_changes:
             # No model summary passed the checks: show the before/after facts themselves, which are
             # read straight from the diff.
@@ -240,10 +241,10 @@ def _evidence_markdown(item: dict) -> str:
 RULES_NOTE = "Summarized by flow and by system interface from the changes in the diff."
 
 
-def _rule_changes(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None) -> list[dict]:
+def _rule_changes(facts: list[BehaviorFunctionFact], surfaces: list[dict] | None = None, system: dict | None = None) -> list[dict]:
     from app.explanation.plain_summary import rule_behavior_items
 
-    return rule_behavior_items(facts, lambda ids: evidence_links(ids, facts), surfaces)
+    return rule_behavior_items(facts, lambda ids: evidence_links(ids, facts), surfaces, system)
 
 
 # --- screening ----------------------------------------------------------------------------

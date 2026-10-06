@@ -5,6 +5,7 @@ from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section, render_behavioral_changes_markdown
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND
 from app.explanation.impact import build_impact_facts, build_impact_section, render_impact_markdown
+from app.explanation.architecture import system_facts
 from app.explanation.plain_summary import surfaces_from
 from app.explanation.details import build_details, render_details_markdown
 from app.explanation.schema import EvidenceRef, ExplanationDocument
@@ -512,7 +513,12 @@ def _append_behavioral_changes(
     narrative = getattr(document, "behavioral_changes", None) if document is not None else None
     reasons = list(getattr(document, "behavior_screening", None) or []) if document is not None else []
     section = build_behavioral_section(
-        narrative=narrative, facts=facts, prescreened=True, reasons=reasons, surfaces=surfaces_from(claims, evidence, repo)
+        narrative=narrative,
+        facts=facts,
+        prescreened=True,
+        reasons=reasons,
+        surfaces=surfaces_from(claims, evidence, repo),
+        system=_system(symbols, relationships, claims, evidence, facts, repo, head_sha),
     )
     parts.append(render_behavioral_changes_markdown(section))
 
@@ -539,8 +545,21 @@ def _append_impact(
         prescreened=True,
         reasons=reasons,
         surfaces=surfaces_from(claims, evidence, repo),
+        system=_system(symbols, relationships, claims, evidence, behavior_facts, repo, head_sha),
     )
     parts.append(render_impact_markdown(section))
+
+
+def _system(symbols, relationships, claims, evidence, behavior_facts, repo, sha) -> dict:
+    return system_facts(
+        symbols=symbols or [],
+        relationships=relationships or [],
+        claims=claims or [],
+        evidences=evidence or [],
+        behavior_facts=behavior_facts,
+        repo=repo,
+        sha=sha,
+    )
 
 
 def _flow_markdown(text: str) -> str:

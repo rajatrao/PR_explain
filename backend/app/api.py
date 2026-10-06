@@ -26,6 +26,7 @@ from app.explanation.behavioral_changes import build_behavioral_section
 from app.explanation.schema import ReviewReport
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND, build_review_diagram
 from app.explanation.impact import build_impact_facts, build_impact_section
+from app.explanation.architecture import system_facts
 from app.explanation.plain_summary import surfaces_from
 from app.explanation.details import build_details
 from app.explanation.narrate import compose_document, explain_bullets
@@ -416,6 +417,17 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             ),
             prescreened=True,
             surfaces=(surfaces := surfaces_from(run.claims, run.evidences, repository.full_name)),
+            system=(
+                system := system_facts(
+                    symbols=run.symbols,
+                    relationships=run.relationships_,
+                    claims=run.claims,
+                    evidences=run.evidences,
+                    behavior_facts=behavior_facts,
+                    repo=repository.full_name,
+                    sha=revision.head_sha,
+                )
+            ),
         ),
         "impact": build_impact_section(
             narrative=_quick_field(explanations, "impact"),
@@ -424,6 +436,7 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             prescreened=True,
             reasons=_quick_screening(explanations, "impact_screening"),
             surfaces=surfaces,
+            system=system,
         ),
         "changes": build_file_changes(run.evidences, run.claims, (patches := _patches_for_run(run))),
         "review": _review_for_run(explanations, run, repository.full_name, revision.head_sha, patches),
