@@ -11,10 +11,10 @@ import re
 
 from app.analyzer.parse import is_dunder_name, is_package_marker, is_private_python_name, is_test_path
 from app.explanation.key_changes import build_key_rows, build_outside_rows
-from app.explanation.explain_view import function_file_by_name, private_python_hidden_names, without_hidden_symbols
+from app.explanation.explain_view import private_python_hidden_names, without_hidden_symbols
 
 _AREAS = ("API", "Database", "Auth", "Frontend", "Backend", "Tests", "Dependencies", "Configuration")
-_UNKNOWN_KINDS = ("fanout_truncated", "ambiguous_call", "diff_only", "unknown_boundary")
+
 _AUTH_STEMS = {"auth", "oauth", "password", "session", "login"}
 _CONFIG_NAMES = {
     "tsconfig.json",
@@ -59,7 +59,7 @@ _ACCESSOR_NAME = re.compile(
     r"_(?:text|subject|kind|field|detail|location|name|value|path|file|id|label|symbol_id|rel_end)\Z"
 )
 _GENERIC_VERBS = {"push", "request", "upgrade", "main", "statements", "compare"}
-_FOLDED_SECTIONS = {"Tests", "Unchanged boundary"}
+_FOLDED_SECTIONS: set[str] = set()
 
 
 def build_details(
@@ -97,22 +97,6 @@ def build_details(
                     symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
                 ),
             },
-            {"title": "Tests", "rows": _test_rows(claims)},
-            {"title": "Unchanged boundary", "rows": _boundary_rows(claims)},
-            {
-                "title": "Reviewer Attention",
-                "rows": (
-                    attention := _attention_rows(
-                        symbols,
-                        claims,
-                        evidence_by_id,
-                        repo,
-                        sha,
-                        document_unknowns or [],
-                    )
-                ),
-            },
-            {"title": "Review questions", "rows": _question_rows(claims, review_questions or [], attention)},
         ]
     )
     hidden = private_python_hidden_names(
@@ -498,96 +482,6 @@ def _subsection_markdown(section: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def _attention_rows(symbols, claims, evidence_by_id, repo: str, sha: str, document_unknowns: list[str]) -> list[dict]:
-    """Changed symbols with no stored test, and files outside the diff that reach one."""
-    rows = _without_unknowns(
-        _inspect_rows(symbols, claims, evidence_by_id, repo, sha),
-        claims,
-        document_unknowns,
-    )
-    return rows or [_row("Inspect", "none found", None)]
-
-
-def _without_unknowns(rows: list[dict], claims, document_unknowns: list[str]) -> list[dict]:
-    """Drop a row labeled Unknown, or whose text is a stored unknown."""
-    unknown_texts = _stored_unknown_texts(claims, document_unknowns)
-    kept: list[dict] = []
-    for row in rows:
-        label = (row.get("label") or "").strip()
-        value = _clean_fact(row.get("value") or "")
-        if label.casefold() == "unknown" or (value and value.casefold() in unknown_texts):
-            continue
-        kept.append(row)
-    return kept
-
-
-def _stored_unknown_texts(claims, document_unknowns: list[str]) -> set[str]:
-    texts: set[str] = set()
-    for text in document_unknowns or []:
-        cleaned = _clean_fact(text).casefold()
-        if cleaned:
-            texts.add(cleaned)
-    for claim in claims or []:
-        if _kind(claim) not in _UNKNOWN_KINDS:
-            continue
-        cleaned = _clean_fact(_claim_text(claim)).casefold()
-        if cleaned:
-            texts.add(cleaned)
-    return texts
-
-
-def _inspect_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[dict]:
-    """Changed symbols with no stored test, and files outside the diff that reach one."""
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    changed_names = _changed_names(symbols, claims)
-    reason_files: set[str] = set()
-    symbol_paths = function_file_by_name(symbols)
-    for claim in claims:
-        if _kind(claim) != "missing_test":
-            continue
-        subject = _subject(claim)
-        if _is_area_name(subject):
-            continue
-        if changed_names and subject not in changed_names:
-            continue
-        subject_path = symbol_paths.get(subject) or _claim_file(claim, evidence_by_id)
-        if (
-            is_dunder_name(subject)
-            or is_private_python_name(subject, subject_path)
-            or _name_only_in_hidden_file(symbols, subject)
-        ):
-            continue
-        _push(rows, seen, subject or "Symbol", "no test reference is stored", None)
-    for claim in claims:
-        if _kind(claim) != "file_reason" or not _subject(claim) or _is_area_name(_subject(claim)):
-            continue
-        if _hidden_review_file(_subject(claim)):
-            continue
-        why = _file_reason_why(claim)
-        if not why:
-            continue
-        reason_files.add(_subject(claim))
-        _push(rows, seen, _subject(claim), why, _claim_href(claim, evidence_by_id, repo, sha))
-    for claim in claims:
-        if _kind(claim) != "reaches_changed" or not _subject(claim) or _subject(claim) in reason_files:
-            continue
-        if _is_area_name(_subject(claim)) or _hidden_review_file(_subject(claim)):
-            continue
-        _push(rows, seen, _subject(claim), _outside_reason(claim), _claim_href(claim, evidence_by_id, repo, sha))
-    for claim in claims:
-        if _kind(claim) not in {"dependency_changed", "dependency"}:
-            continue
-        subject = _subject(claim)
-        if _is_area_name(subject):
-            continue
-        why = _clean_fact(_sentence(claim))
-        if not why or why == "none found" or _is_path_list(why):
-            continue
-        _push(rows, seen, subject or "Dependency", why, _claim_href(claim, evidence_by_id, repo, sha))
-    return rows
-
-
 def _hidden_review_file(path: str | None) -> bool:
     return bool(path) and (is_test_path(path) or is_package_marker(path))
 
@@ -615,17 +509,6 @@ def _claim_file(claim, evidence_by_id) -> str | None:
     return None
 
 
-def _name_only_in_hidden_file(symbols, name: str | None) -> bool:
-    if not name:
-        return False
-    matches = [
-        symbol
-        for symbol in symbols or []
-        if getattr(symbol, "kind", None) == "function" and getattr(symbol, "name", None) == name
-    ]
-    return bool(matches) and all(_hidden_review_file(getattr(symbol, "file_path", None)) for symbol in matches)
-
-
 def _changed_functions(symbols) -> list:
     rows = []
     for symbol in symbols or []:
@@ -640,33 +523,6 @@ def _changed_functions(symbols) -> list:
         rows.append(symbol)
     rows.sort(key=lambda symbol: (symbol.file_path, getattr(symbol, "start_line", 0) or 0, symbol.name))
     return rows
-
-
-def _changed_identity(symbols) -> tuple[set[str], set[str]]:
-    ids: set[str] = set()
-    names: set[str] = set()
-    for symbol in _changed_functions(symbols):
-        symbol_id = _symbol_id(symbol)
-        if symbol_id:
-            ids.add(symbol_id)
-        names.add(symbol.name)
-    return ids, names
-
-
-def _changed_names(symbols, claims) -> set[str]:
-    names = {symbol.name for symbol in _changed_functions(symbols)}
-    if names:
-        return names
-    return {_subject(claim) for claim in claims if _kind(claim) == "symbol_changed" and _subject(claim)}
-
-
-def _evidence_place(item, repo: str, sha: str) -> tuple[str | None, str | None]:
-    file = getattr(item, "file", None) if item is not None else None
-    if not file:
-        return None, None
-    start = getattr(item, "start_line", None)
-    end = getattr(item, "end_line", None)
-    return _location(file, start, end), _blob(repo, sha, file, start, end)
 
 
 def _push(rows: list[dict], seen: set[tuple[str, str]], label: str, value: str, href: str | None) -> None:
@@ -771,8 +627,6 @@ def _changed_rows(symbols, claims, evidence_by_id, repo: str, sha: str) -> list[
     return rows or [_row("Changed", "none found", None)]
 
 
-
-
 def _shared_rows(symbols, relationships) -> list[dict]:
     changed_ids = {
         symbol_id
@@ -801,123 +655,6 @@ def _shared_rows(symbols, relationships) -> list[dict]:
     return rows or [_row("Shared code", "none found", None)]
 
 
-def _test_rows(claims) -> list[dict]:
-    rows: list[dict] = []
-    for claim in claims:
-        if _kind(claim) == "tests":
-            rows.append(_row(_subject(claim) or "Test", _sentence(claim), None))
-        elif _kind(claim) == "missing_test":
-            subject = _subject(claim) or "Symbol"
-            rows.append(_row(subject, "no test reference", None))
-    return rows or [_row("Tests", "none found", None)]
-
-
-def _boundary_rows(claims) -> list[dict]:
-    rows: list[dict] = []
-    reaching = {_subject(claim) for claim in claims if _kind(claim) == "reaches_changed" and _subject(claim)}
-    for claim in claims:
-        subject = _subject(claim)
-        if _kind(claim) == "reaches_changed" and subject:
-            rows.append(_row(subject, _outside_reason(claim), None))
-        elif _kind(claim) == "behavior_unchanged" and subject and subject not in reaching:
-            rows.append(_row(subject, "does not reach a changed symbol", None))
-    return rows or [_row("Boundary", "none found", None)]
-
-
-
-
-def _question_rows(claims, review_questions: list[str], attention_rows: list[dict]) -> list[dict]:
-    """Questions a reviewer can answer from the diff.
-
-    Stored model prose is kept only when it names a claim subject and does not
-    repeat an attention fact. A missing test or an outside-file reach is already
-    stated above, so it is not asked again. No question is better than a restatement.
-    """
-    texts: list[str] = []
-    for text in review_questions:
-        cleaned = " ".join((text or "").split())
-        if cleaned and cleaned not in texts and _keep_question(cleaned, claims, attention_rows):
-            texts.append(cleaned)
-    if not texts:
-        return [_row("Review", "none found", None)]
-    return [_row("Review", text, None) for text in texts]
-
-
-_GENERIC_QUESTION = re.compile(
-    r"does this look (correct|good|right|fine)|is this (correct|ok|okay|fine|good)|"
-    r"should (this|we|i) approve|\blgtm\b",
-    re.I,
-)
-_VERDICT_QUESTION = re.compile(r"\b(insecure|will break|approve|quality score)\b", re.I)
-_TEST_ASK = re.compile(r"\b(tests?|tested|testing|untested)\b", re.I)
-
-
-def _keep_question(text: str, claims, attention_rows: list[dict]) -> bool:
-    if "?" not in text or _GENERIC_QUESTION.search(text) or _VERDICT_QUESTION.search(text):
-        return False
-    if _restates_attention(text, attention_rows):
-        return False
-    return _follows_claims(text, claims)
-
-
-def _follows_claims(text: str, claims) -> bool:
-    lowered = text.lower()
-    for claim in claims:
-        subject = _subject(claim)
-        if subject and len(subject) >= 2 and subject.lower() in lowered:
-            return True
-    return False
-
-
-def _restates_attention(text: str, attention_rows: list[dict]) -> bool:
-    lowered = text.lower()
-    for row in attention_rows:
-        label = (row.get("label") or "").strip()
-        value = _clean_fact(row.get("value") or "")
-        if not value or value == "none found":
-            continue
-        if value.lower() in lowered:
-            return True
-        label_l = label.lower()
-        named = bool(label_l) and label_l in lowered
-        if "no test reference" in value.lower() and named and _TEST_ASK.search(lowered):
-            return True
-        if "reaches changed symbol" in value.lower() and named and "reach" in lowered:
-            return True
-        if named and any(token in value.lower() for token in ("ambiguous", "truncated", "not stored", "no ")):
-            if any(token in lowered for token in ("ambiguous", "resolve", "definition", "truncated", "not stored")):
-                return True
-    return False
-
-
-def _file_reason_why(claim) -> str:
-    text = _claim_text(claim).strip()
-    match = re.search(r"matters because (.+)$", text, re.I)
-    why = match.group(1).strip() if match else _sentence(claim)
-    why = _clean_fact(why)
-    if not why or why == "none found" or _is_path_list(why) or _is_area_name(why):
-        return ""
-    return why
-
-
-def _is_area_name(label: str) -> bool:
-    return bool(label) and label.strip().lower() in {area.lower() for area in _AREAS}
-
-
-def _is_path_list(value: str) -> bool:
-    parts = [part.strip() for part in value.split(",") if part.strip()]
-    if len(parts) < 2:
-        return False
-    return all(_is_path(part) or _is_area_name(part) for part in parts)
-
-
-def _clean_fact(text: str) -> str:
-    cleaned = " ".join((text or "").split())
-    if cleaned.endswith("."):
-        cleaned = cleaned[:-1]
-    return cleaned
-
-
 def _path_area(path: str) -> str | None:
     lowered = path.replace("\\", "/").lower()
     base = lowered.rsplit("/", 1)[-1]
@@ -937,8 +674,6 @@ def _path_area(path: str) -> str | None:
     if lowered.startswith("backend/") or "/backend/" in f"/{lowered}" or base.endswith(".py"):
         return "Backend"
     return None
-
-
 
 
 def _outside_reason(claim) -> str:
@@ -984,16 +719,6 @@ def _location(file: str | None, start, end) -> str:
     if file and start:
         return f"{file}:{start}"
     return file or "changed"
-
-
-def _href_for_location(repo: str, sha: str, location: str | None) -> str | None:
-    if not location:
-        return None
-    match = re.match(r"^(.*):(\d+)(?:-(\d+))?$", location)
-    if not match:
-        return None
-    end = int(match.group(3)) if match.group(3) else None
-    return _blob(repo, sha, match.group(1), int(match.group(2)), end)
 
 
 def _blob(repo: str, sha: str, file: str | None, start, end) -> str | None:

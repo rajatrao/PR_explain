@@ -17,10 +17,7 @@ _DETAILS_TITLES = (
     "Key Changes",
     "Shared code",
     "Callers outside the diff",
-    "Tests",
-    "Unchanged boundary",
 )
-_REVIEW_TITLES = ("Reviewer Attention", "Review questions")
 RETIRED_DETAILS_NOTE = "This content moved to the Explain comment."
 
 
@@ -198,7 +195,10 @@ def render_combined_comment(
     flow_blocks: list[str] = []
     _append_flow_diagrams(flow_blocks, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence)
     details_md = _before_key_changes(_markdown_for(built, _DETAILS_TITLES), "\n\n".join(flow_blocks))
-    review_md = _markdown_for(built, _REVIEW_TITLES)
+    review_md = _review_markdown(
+        document, symbols=symbols, relationships=relationships, claims=claims, evidence=evidence,
+        repo=repo_full_name, sha=head_sha, patches=patches,
+    )
     changes = build_file_changes(evidence or [], claims or [], patches)
 
     def assemble(flow: list[str], details_text: str, review_text: str) -> str:
@@ -224,6 +224,21 @@ def render_combined_comment(
     return _bounded(
         assemble([], _clip_preserving_flow(details_md, room // 2), _clip_preserving_flow(review_md, room - room // 2))
     )
+
+
+def _review_markdown(document, *, symbols, relationships, claims, evidence, repo, sha, patches) -> str:
+    """The Review section: the stored review report, or the rule review when none was stored."""
+    from types import SimpleNamespace
+
+    from app.explanation.review_report import build_review, render_review_markdown
+
+    report = getattr(document, "review", None)
+    if report is None:
+        stored = SimpleNamespace(
+            symbols=symbols or [], relationships=relationships or [], claims=claims or [], evidences=evidence or []
+        )
+        report = build_review(stored=stored, repo=repo, sha=sha, patches=patches)
+    return render_review_markdown(report, repo=repo, sha=sha)
 
 
 def _fit_file_changes(changes, details_md: str, review_md: str, flow: list[str], assemble) -> str | None:

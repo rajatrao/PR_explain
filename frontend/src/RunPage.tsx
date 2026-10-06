@@ -1,10 +1,9 @@
-import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import mermaid from "mermaid";
 import { getRun, requestExplanation, retryRun } from "./api";
 import type {
   BehaviorFlows,
   ChangeFlowDiagram,
-  Epistemic,
   FileChange,
   RunDetail,
   BehavioralChanges,
@@ -188,7 +187,7 @@ export function RunPage({ id }: { id: string }) {
       <div className="layout solo">
         <div>
           {tab === "review" ? (
-            <ReviewQuestionsView run={run} />
+            <ReviewView run={run} />
           ) : run.analysis_status === "succeeded" && tab === "quick" ? (
             <>
               <MermaidDiagram chart={run.change_flow_diagram?.mermaid ?? ""} />
@@ -210,7 +209,6 @@ export function RunPage({ id }: { id: string }) {
               </button>
             </section>
           )}
-          {tab === "deep" ? <DeltaView run={run} /> : null}
         </div>
       </div>
     </article>
@@ -461,15 +459,21 @@ const DETAILS_ORDER = [
   "What changed",
   "Shared code",
   "Callers outside the diff",
-  "Tests",
-  "Unchanged boundary",
 ];
 
-const HIDDEN_ON_DETAILS = new Set(["Review questions", "Reviewer Attention", "Unknowns", "Risk Areas", "What changed"]);
+const HIDDEN_ON_DETAILS = new Set([
+  "Review questions",
+  "Reviewer Attention",
+  "Unknowns",
+  "Risk Areas",
+  "What changed",
+  "Tests",
+  "Unchanged boundary",
+]);
 
 const DETAIL_ROW_LIMIT = 20;
 
-const FOLD_SECTIONS = new Set(["Tests", "Unchanged boundary"]);
+const FOLD_SECTIONS = new Set<string>();
 
 const TABLE_HEADERS: Record<string, [string, string]> = {
   "High-level areas affected": ["Area", "Names"],
@@ -487,7 +491,6 @@ const WRAP_FIRST_COLUMN = new Set([
   "Key Changes",
   "Risk Areas",
   "What changed",
-  "Unchanged boundary",
   "Callers outside the diff",
 ]);
 
@@ -752,100 +755,168 @@ function DetailRows({ title, rows }: { title: string; rows: DetailRow[] }) {
   );
 }
 
-function ReviewQuestionsView({ run }: { run: RunDetail }) {
-  const attention = sectionRows(run, "Reviewer Attention");
-  const questions = reviewQuestionTexts(run);
+function ReviewView({ run }: { run: RunDetail }) {
+  const report = run.review;
+  if (!report) return <p className="kicker">The review is not available for this run yet.</p>;
+  const link = (location: string) => codeLink(location, run.revision.repository, run.revision.head_sha);
+  const tops = new Set(report.top_questions.map((item) => item.question));
+  const moreQuestions = report.questions.filter((item) => !tops.has(item.question));
+  const testGroups = groupBy(report.missing_tests, (item) => item.group);
   return (
-    <>
-      <section className="review-panel" aria-label="Reviewer Attention">
-        <h2>Reviewer Attention</h2>
-        {attention.length === 0 ? (
-          <p className="review-empty">none were found</p>
-        ) : (
+    <div className="review">
+      {report.source === "rules" ? (
+        <p className="kicker">From the analysis rules only; no model review is stored for this run.</p>
+      ) : null}
+
+      <ReviewSection title="1. Reviewer attention areas" empty={report.attention.length === 0}>
+        {report.attention.map((area, index) => (
+          <article className="review-card" key={`${index}-${area.area}`}>
+            <header>
+              <span className={`priority priority-${area.priority.toLowerCase()}`}>{area.priority}</span>
+              <strong>{area.area}</strong>
+            </header>
+            <dl>
+              <dt>Why it matters</dt>
+              <dd>{area.why_it_matters}</dd>
+              <dt>What changed</dt>
+              <dd>{area.what_changed}</dd>
+              <dt>What could go wrong</dt>
+              <dd>{area.what_could_go_wrong}</dd>
+              {area.involved.length > 0 ? (
+                <>
+                  <dt>Files/functions</dt>
+                  <dd>{joinNodes(area.involved.map(link))}</dd>
+                </>
+              ) : null}
+            </dl>
+          </article>
+        ))}
+      </ReviewSection>
+
+      <ReviewSection title="2. Reviewer questions" empty={moreQuestions.length === 0 && report.top_questions.length === 0}>
+        {moreQuestions.length > 0 ? (
           <ul className="review-questions">
-            {attention.map((row, index) => (
-              <li key={`${index}-${row.label}-${row.value}`}>
-                <span className="detail-label">{row.label}</span>
-                {" — "}
-                {row.href ? (
-                  <a href={row.href} target="_blank" rel="noreferrer">
-                    {row.value}
-                  </a>
-                ) : (
-                  row.value
-                )}
-              </li>
+            {moreQuestions.map((item, index) => (
+              <li key={`${index}-${item.question}`}>{item.question}</li>
             ))}
           </ul>
-        )}
-      </section>
-      <section className="review-panel" aria-label="Review questions">
-        <h2>Review questions</h2>
-        {questions.length === 0 ? (
-          <p className="review-empty">none were found</p>
         ) : (
+          <p className="review-empty">All questions are ranked in the top questions below.</p>
+        )}
+      </ReviewSection>
+
+      <ReviewSection title="3. Potential bugs and regressions" empty={report.bugs.length === 0}>
+        {report.bugs.map((bug, index) => (
+          <article className="review-card" key={`${index}-${bug.finding}`}>
+            <header>
+              <span className={`priority status-${bug.status}`}>{bug.status}</span>
+              <strong>{bug.finding}</strong>
+              <span className="kicker"> confidence {bug.confidence}</span>
+            </header>
+            <dl>
+              <dt>Evidence</dt>
+              <dd>
+                {bug.evidence}
+                {bug.locations.length > 0 ? <> ({joinNodes(bug.locations.map(link))})</> : null}
+              </dd>
+              <dt>Scenario</dt>
+              <dd>{bug.scenario}</dd>
+              <dt>Impact</dt>
+              <dd>{bug.impact}</dd>
+            </dl>
+          </article>
+        ))}
+      </ReviewSection>
+
+      <ReviewSection title="4. Missing test scenarios" empty={report.missing_tests.length === 0}>
+        {[...testGroups.entries()].map(([group, tests]) => (
+          <div className="detail-group" key={group}>
+            <h3>{group}</h3>
+            <ul className="review-questions">
+              {tests.map((test, index) => (
+                <li key={`${index}-${test.scenario}`}>
+                  {test.scenario} <span className="kicker">— {test.verifies}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </ReviewSection>
+
+      <ReviewSection title="5. Things that look safe" empty={report.safe.length === 0}>
+        <ul className="review-questions">
+          {report.safe.map((item, index) => (
+            <li key={`${index}-${item.area}`}>
+              <strong>{item.area}</strong> — {item.why}
+            </li>
+          ))}
+        </ul>
+      </ReviewSection>
+
+      <ReviewSection title="6. Top review questions" empty={report.top_questions.length === 0}>
+        <ol className="review-questions ranked">
+          {report.top_questions.map((item, index) => (
+            <li key={`${index}-${item.question}`}>
+              <strong>{item.question}</strong>
+              <div className="kicker">Why ask this: {item.why_ask}</div>
+              <div className="kicker">
+                Relevant code: {item.locations.length > 0 ? joinNodes(item.locations.map(link)) : item.relevant_code}
+              </div>
+            </li>
+          ))}
+        </ol>
+      </ReviewSection>
+
+      {report.undetermined.length > 0 ? (
+        <ReviewSection title="Could not determine">
           <ul className="review-questions">
-            {questions.map((question, index) => (
-              <li key={`${index}-${question}`}>{question}</li>
+            {report.undetermined.map((text, index) => (
+              <li key={`${index}-${text}`}>{text}</li>
             ))}
           </ul>
-        )}
+        </ReviewSection>
+      ) : null}
+
+      <section className={`review-panel risk risk-${report.overall_risk.toLowerCase()}`} aria-label="Overall review risk">
+        <h2>
+          Overall review risk: <span className="risk-badge">{report.overall_risk}</span>
+        </h2>
+        <p>{report.risk_reason}</p>
       </section>
-    </>
+    </div>
   );
 }
 
-function sectionRows(run: RunDetail, title: string): DetailRow[] {
-  const section = (run.details?.sections ?? []).find((item) => item.title === title);
-  if (!section) return [];
-  const seen = new Set<string>();
-  const rows: DetailRow[] = [];
-  for (const row of section.rows) {
-    const value = row.value.trim();
-    if (!row.label || !value || value === "none found" || seen.has(`${row.label}\0${value}`)) continue;
-    seen.add(`${row.label}\0${value}`);
-    rows.push(row);
-  }
-  return rows;
-}
-
-function reviewQuestionTexts(run: RunDetail): string[] {
-  const section = (run.details?.sections ?? []).find((item) => item.title === "Review questions");
-  if (!section) return [];
-  const seen = new Set<string>();
-  const texts: string[] = [];
-  for (const row of section.rows) {
-    const value = row.value.trim();
-    if (!value || value === "none found" || seen.has(value)) continue;
-    seen.add(value);
-    texts.push(value);
-  }
-  return texts;
-}
-
-function DeltaView({ run }: { run: RunDetail }) {
-  if (!run.delta || !run.delta.previous_head_sha) return null;
+function ReviewSection({ title, empty = false, children }: { title: string; empty?: boolean; children?: ReactNode }) {
   return (
-    <details className="delta">
-      <summary>What is new since {run.delta.previous_head_sha.slice(0, 12)}</summary>
-      <p className="kicker">{run.delta.unchanged_count} claims unchanged</p>
-      {run.delta.added.map((claim) => (
-        <article className="claim" key={`add-${claim.text}`}>
-          <header>
-            <span className={`chip epistemic ${claim.epistemic as Epistemic}`}>{claim.epistemic}</span>
-            <span className="kicker">added</span>
-          </header>
-          <p>{claim.text}</p>
-        </article>
-      ))}
-      {run.delta.removed.map((claim) => (
-        <article className="claim" key={`rem-${claim.text}`}>
-          <header>
-            <span className="chip">removed</span>
-          </header>
-          <p>{claim.text}</p>
-        </article>
-      ))}
-    </details>
+    <section className="review-panel" aria-label={title}>
+      <h2>{title}</h2>
+      {empty ? <p className="review-empty">None found in the diff and stored facts.</p> : children}
+    </section>
   );
+}
+
+function codeLink(location: string, repo: string, sha: string): ReactNode {
+  const match = /^([^\s:]+?)(?::(\d+)(?:-(\d+))?)?$/.exec(location);
+  if (!match || !match[1].includes(".")) return <code key={location}>{location}</code>;
+  const [, path, start, end] = match;
+  const anchor = start ? `#L${start}${end ? `-L${end}` : ""}` : "";
+  return (
+    <a key={location} href={`https://github.com/${repo}/blob/${sha}/${path}${anchor}`} target="_blank" rel="noreferrer">
+      <code>{location}</code>
+    </a>
+  );
+}
+
+function joinNodes(nodes: ReactNode[]): ReactNode[] {
+  return nodes.flatMap((node, index) => (index === 0 ? [node] : [", ", node]));
+}
+
+function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const item of items) {
+    const name = key(item);
+    out.set(name, [...(out.get(name) ?? []), item]);
+  }
+  return out;
 }

@@ -13,10 +13,6 @@ _TITLES = [
     "What changed",
     "Shared code",
     "Callers outside the diff",
-    "Tests",
-    "Unchanged boundary",
-    "Reviewer Attention",
-    "Review questions",
 ]
 
 _COMMENT_ORDER = [
@@ -24,10 +20,6 @@ _COMMENT_ORDER = [
     "### Key Changes",
     "### Shared code",
     "### Callers outside the diff",
-    "<summary>Tests</summary>",
-    "<summary>Unchanged boundary</summary>",
-    "### Reviewer Attention",
-    "### Review questions",
 ]
 
 
@@ -78,18 +70,6 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     for banned in ("insecure", "broken", "risky", "approve", "score"):
         assert banned not in risk_text
 
-    attention_rows = rows["Reviewer Attention"]
-    attention = " ".join(row["value"] for row in attention_rows)
-    assert any(row["label"] == "createSession" and row["value"] == "no test reference is stored" for row in attention_rows)
-    assert any(row["label"] == "src/login.ts" and row["value"] == "login calls createSession" for row in attention_rows)
-    assert any(
-        row["label"] == "src/password.ts" and row["value"] == "reaches changed symbol createSession"
-        for row in attention_rows
-    )
-    assert "exported in this pull request" not in attention
-    assert "none found" not in attention
-    for banned_label in ("API", "Auth", "Database", "Frontend", "Backend", "Dependencies", "Configuration"):
-        assert banned_label not in {row["label"] for row in attention_rows}
     assert "Suggested review areas" not in [section["title"] for section in details["sections"]]
     assert not any(
         subsection.get("title") == "Suggested review areas"
@@ -105,16 +85,6 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert shared["value"].startswith("callers: ")
     assert shared["value"].count(",") >= 1
 
-    assert any(row["value"] == "no test reference" for row in rows["Tests"])
-    assert rows["Review questions"] == [{"label": "Review", "value": "none found", "href": None}]
-    question_text = " ".join(row["value"] for row in rows["Review questions"]).lower()
-    assert "what test should reference" not in question_text
-    assert "does this look correct" not in question_text
-
-    for row in rows["Unchanged boundary"]:
-        if row["value"].startswith("reaches changed symbol"):
-            assert "unchanged" not in row["value"]
-    assert any(row["value"] == "does not reach a changed symbol" for row in rows["Unchanged boundary"])
     assert any(row["label"].endswith(".ts") for row in rows["Callers outside the diff"])
 
     body = render_combined_comment(
@@ -155,7 +125,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "- createSession changed." not in explain  # Explain has no summary section
     assert "### What changed" not in details
     assert "createSession" in body
-    detail_titles = _COMMENT_ORDER[: _COMMENT_ORDER.index("<summary>Unchanged boundary</summary>") + 1]
+    detail_titles = _COMMENT_ORDER
     places = [details.index(title) for title in detail_titles]
     assert places == sorted(places)
     assert "### Change Overview" not in details
@@ -163,7 +133,7 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Unknowns" not in details
     assert "| Area | Names |" in details
     assert "| Function | What it means for callers |" in details
-    assert "| Where | Why look |" in details
+    assert "| Where | Why look |" not in details
     assert "### Behavior Changes" not in details
     assert "### Behavioral Changes" in explain
     assert "### Behavioral Changes" not in details
@@ -171,14 +141,15 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert explain.index("```mermaid") < explain.index("### Behavioral Changes")
     assert "### Reviewer Attention" not in details
     assert "### Review questions" not in details
-    assert "### Reviewer Attention" in review
+    assert "### Overall review risk: Medium" in review
+    assert "**Medium · createSession (src/session.ts)**" in review
+    assert "Which test covers the new behavior of createSession?" in review
+    assert "Already passes ttlMs" in review
     assert "Suggested review areas" not in review
     assert "| Where | Why look |" not in review
     assert "### Trace" not in body
     assert "what test should reference" not in review.lower()
-    attention_at = review.index("### Reviewer Attention")
-    questions_at = review.index("### Review questions")
-    assert attention_at < questions_at
+    assert review.index("### 1. Reviewer attention areas") < review.index("### 6. Top review questions") < review.index("### Overall review risk")
     lowered = body.lower()
     assert "one-hop" not in lowered
     assert "insecure" not in lowered
@@ -274,22 +245,14 @@ def test_details_omits_behavior_section_and_still_surfaces_risk():
     assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in rows["Risk Areas"])
     assert all("insecure" not in row["value"] and "risky" not in row["value"] for row in rows["Risk Areas"])
 
-    attention_labels = [row["label"] for row in rows["Reviewer Attention"]]
-    assert "changedFn" in attention_labels
-    assert any(row["label"] == "changedFn" and row["value"] == "no test reference is stored" for row in rows["Reviewer Attention"])
-    assert any(row["label"] == "src/b.ts" and row["value"] == "reaches changed symbol changedFn" for row in rows["Reviewer Attention"])
-    assert not any(row["label"] == "Unknown" for row in rows["Reviewer Attention"])
     for unknown_text in (
         "No database or schema facts are in this packet",
         "No dependency facts are in this packet",
         "No external system facts are in this packet",
     ):
-        assert unknown_text not in [row["value"] for row in rows["Reviewer Attention"]]
         assert "Unknowns" not in rows
         assert unknown_text not in [row["value"] for section in rows.values() for row in section]
-    assert not any("exported in this pull request" in row["value"] for row in rows["Reviewer Attention"])
-    assert all(row["label"] != "Database" for row in rows["Reviewer Attention"])
-    assert [row["value"] for row in rows["Review questions"]] == ["Does caller still pass the value changedFn returns?"]
+    assert "Reviewer Attention" not in rows and "Review questions" not in rows
 
     empty = build_details(
         symbols=[],
@@ -303,7 +266,7 @@ def test_details_omits_behavior_section_and_still_surfaces_risk():
     empty_rows = {section["title"]: section["rows"] for section in empty["sections"]}
     assert "Behavior Changes" not in empty_rows
     assert "Change Overview" not in empty_rows
-    assert empty_rows["Reviewer Attention"] == [{"label": "Inspect", "value": "none found", "href": None}]
+    assert "Reviewer Attention" not in empty_rows
     assert not any(
         subsection.get("title") == "Suggested review areas"
         for section in empty["sections"]
@@ -450,18 +413,14 @@ def test_system_impact_skips_test_paths_risk_is_deduped_and_long_sections_collap
     assert "not in the diff" in worker["value"]
     assert "another reason" not in worker["value"]
 
-    assert len(rows["Tests"]) > 20
+    assert "Tests" not in rows
     markdown = render_details_markdown(details)
     assert "### Unknowns" not in markdown
     assert "No dependency facts are in this packet" not in markdown
     assert "No database or schema facts are in this packet" not in markdown
-    tests_md = markdown.split("<summary>Tests</summary>", 1)[1].split("</details>", 1)[0]
-    assert "more</summary>" not in tests_md
+    assert "<summary>Tests</summary>" not in markdown
+    assert "<summary>Unchanged boundary</summary>" not in markdown
     assert "<details open" not in markdown
-    assert "test_fn0.py" in tests_md
-    assert f"test_fn{len(rows['Tests']) - 1}.py" in tests_md or "fn21" in tests_md
-    boundary_md = markdown.split("<summary>Unchanged boundary</summary>", 1)[1].split("</details>", 1)[0]
-    assert boundary_md.strip()
     assert "### Impact" not in markdown
     shared_md = markdown.split("### Shared code", 1)[1].split("<details>", 1)[0]
     assert "<details>" not in shared_md

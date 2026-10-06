@@ -460,3 +460,37 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 .impact-dependents ul, .impact-verify ul { margin: 0; padding-left: 18px; font-size: 14px; }
 .diagram-legend { margin: 6px 0 0; }
 
+
+.review-card {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #e2d9cc;
+  border-radius: 6px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+}
+.review-card header { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.review-card dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+.review-card dt { font-weight: 600; color: #6b6258; }
+.review-card dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .review-card dl { grid-template-columns: 1fr; }
+}
+.priority, .risk-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: #e7e2da;
+  color: #1e1a16;
+}
+.priority-critical, .risk-critical .risk-badge { background: #7f1d1d; color: #fff; }
+.priority-high, .risk-high .risk-badge, .status-confirmed { background: #dc2626; color: #fff; }
+.priority-medium, .risk-medium .risk-badge, .status-possible { background: #f59e0b; color: #1e1a16; }
+.priority-low, .risk-low .risk-badge { background: #d1fae5; color: #065f46; }
+.review-panel.risk p { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 16px; }
+.review-questions.ranked li .kicker { margin-top: 2px; }

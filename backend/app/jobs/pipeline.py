@@ -15,6 +15,7 @@ from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import screen_narrative
 from app.explanation.impact import build_impact_facts, screen_impact
 from app.explanation.review_diagram import build_review_diagram
+from app.explanation.review_report import build_review
 from app.explanation.narrate import compose_document, explain_bullets
 from app.explanation.schema import EvidenceRef, ExplanationDocument, ExplanationPacket
 from app.explanation.select import build_packet
@@ -167,6 +168,9 @@ def execute_explain(
         )
         document.impact_screening = [] if document.impact else impact_screening[:8]
         impact_kept = len(document.impact.areas) if document.impact else 0
+        review_screening: list[str] = []
+        document.review = _review(session, run, settings, provider, packet, review_screening)
+        document.review_screening = review_screening[:12]
     _store_explanation(
         session,
         run,
@@ -196,6 +200,7 @@ def execute_explain(
                 "behavior_screening": screening[:8],
                 "impact_areas_kept": impact_kept,
                 "impact_screening": impact_screening[:8],
+                "review_screening": review_screening[:8],
             }
             if depth == "quick"
             else {"depth": depth}
@@ -211,6 +216,38 @@ def execute_explain(
             document=document,
             failure=None,
         )
+
+
+def _review(session, run, settings: Settings, provider: LLMProvider, packet: ExplanationPacket, reasons: list[str]):
+    """Review tab: rule findings plus a screened model review over the diff. Never fails the run."""
+    revision = run.revision
+    pull = revision.pull_request
+    stored = load_result(session, run)
+    patches = fetch_compare_patches(
+        settings, pull.repository.full_name, revision.base_sha, revision.head_sha, pull.repository.installation_id
+    )
+
+    def ask(system: str, user: str, schema: dict) -> str:
+        request = ExplainRequest(
+            packet=packet, depth="quick", system_prompt=system, user_prompt=user, json_schema=schema
+        )
+        return provider.explain(request).content
+
+    try:
+        return build_review(
+            stored=stored,
+            repo=pull.repository.full_name,
+            sha=revision.head_sha,
+            patches=patches,
+            behavior_facts=packet.behavior_facts,
+            impact_facts=packet.impact_facts,
+            ask_model=ask if settings.review_model_enabled else None,
+            pr_title=revision.title,
+            reasons=reasons,
+        )
+    except Exception as exc:
+        reasons.append(f"review failed: {type(exc).__name__}")
+        return None
 
 
 def execute_comment(session: Session, run_id: uuid.UUID, settings: Settings, comment_client) -> None:

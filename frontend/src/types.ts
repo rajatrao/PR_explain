@@ -144,6 +144,7 @@ export type RunDetail = {
   behavioral_changes?: BehavioralChanges;
   impact?: ImpactSummary;
   changes?: FileChange[];
+  review?: ReviewReport;
   details?: {
     sections: {
       title: string;
@@ -182,3 +183,34 @@ export type ImpactSummary = {
   areas: { title: string; severity: "high" | "medium" | "low"; summary: string; who_notices: string }[];
 };
 
+
+export type ReviewPriority = "Critical" | "High" | "Medium" | "Low";
+
+type Grounded = { fact_ids: string[]; locations: string[]; source?: string };
+
+export type ReviewReport = {
+  source?: "stored" | "rules";
+  attention: (Grounded & {
+    area: string;
+    why_it_matters: string;
+    what_changed: string;
+    what_could_go_wrong: string;
+    involved: string[];
+    priority: ReviewPriority;
+  })[];
+  questions: (Grounded & { question: string })[];
+  bugs: (Grounded & {
+    finding: string;
+    evidence: string;
+    scenario: string;
+    impact: string;
+    confidence: "High" | "Medium" | "Low";
+    status: "confirmed" | "possible";
+  })[];
+  missing_tests: (Grounded & { group: string; scenario: string; verifies: string })[];
+  safe: (Grounded & { area: string; why: string })[];
+  top_questions: (Grounded & { question: string; why_ask: string; relevant_code: string })[];
+  undetermined: string[];
+  overall_risk: ReviewPriority;
+  risk_reason: string;
+};

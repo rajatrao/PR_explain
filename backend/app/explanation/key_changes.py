@@ -193,32 +193,50 @@ def _lead(item: dict) -> str:
 # --- Callers outside the diff -----------------------------------------------------------------
 
 
-def build_outside_rows(*, symbols, relationships, claims, evidences, repo, sha) -> list[dict]:
+def outside_calls(*, symbols, relationships, claims, evidences, repo, sha) -> tuple[list[dict], list[str]]:
+    """Every stored call from a file outside the diff into a changed function, with its findings.
+
+    Returns (calls sorted most-severe first, files that reach changed code only indirectly).
+    Each call: file, line, caller, callee, call, href, notes, severity (0 = check first), flags, item.
+    """
     facts = _Facts(symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha)
-    ranked: list[tuple[tuple, dict]] = []
+    calls: list[dict] = []
     direct_files: set[str] = set()
     for name, item in facts.items.items():
         if not item.get("changes"):
             continue
         for call in facts.calls_into(name):
             direct_files.add(call["file"])
-            notes, severity = _call_notes(item, call, facts)
-            shown = f"`{call['call']}`" if call["call"] else name
-            value = f"{call['caller'] or 'Code here'} calls {shown}" + (f" at line {call['line']}." if call["line"] else ".")
-            if notes:
-                value += " " + " ".join(notes)
-            ranked.append(
-                (
-                    (severity, call["file"], call["line"] or 0),
-                    {"label": call["file"], "value": value, "href": None, "label_href": call["href"]},
-                )
+            flags: dict = {}
+            notes, severity = _call_notes(item, call, facts, flags)
+            calls.append({**call, "callee": name, "notes": notes, "severity": severity, "flags": flags, "item": item})
+    calls.sort(key=lambda c: (c["severity"], c["file"], c["line"] or 0))
+    indirect = sorted(path for path in facts.outside_files if path and path not in direct_files)
+    return calls, indirect
+
+
+def build_outside_rows(*, symbols, relationships, claims, evidences, repo, sha) -> list[dict]:
+    calls, indirect = outside_calls(
+        symbols=symbols, relationships=relationships, claims=claims, evidences=evidences, repo=repo, sha=sha
+    )
+    ranked: list[tuple[tuple, dict]] = []
+    for call in calls:
+        name, notes, severity = call["callee"], call["notes"], call["severity"]
+        shown = f"`{call['call']}`" if call["call"] else name
+        value = f"{call['caller'] or 'Code here'} calls {shown}" + (f" at line {call['line']}." if call["line"] else ".")
+        if notes:
+            value += " " + " ".join(notes)
+        ranked.append(
+            (
+                (severity, call["file"], call["line"] or 0),
+                {"label": call["file"], "value": value, "href": None, "label_href": call["href"]},
             )
+        )
     ranked.sort(key=lambda pair: pair[0])
     rows = [row for _, row in ranked[:OUTSIDE_LIMIT]]
     if len(ranked) > OUTSIDE_LIMIT:
         extra = len(ranked) - OUTSIDE_LIMIT
         rows.append({"label": "More", "value": f"{extra} more call{'s' if extra != 1 else ''} from outside the diff.", "href": None})
-    indirect = sorted(path for path in facts.outside_files if path and path not in direct_files)
     if indirect:
         shown = ", ".join(indirect[:5]) + (f" and {len(indirect) - 5} more" if len(indirect) > 5 else "")
         rows.append(
@@ -231,8 +249,13 @@ def build_outside_rows(*, symbols, relationships, claims, evidences, repo, sha) 
     return rows or [{"label": "Outside the diff", "value": "none found", "href": None}]
 
 
-def _call_notes(item: dict, call: dict, facts: _Facts) -> tuple[list[str], int]:
-    """Facts that decide whether this call still fits, and a sort key (lower = check first)."""
+def _call_notes(item: dict, call: dict, facts: _Facts, flags: dict | None = None) -> tuple[list[str], int]:
+    """Facts that decide whether this call still fits, and a sort key (lower = check first).
+
+    ``flags`` (when passed) receives the structured findings: missing, passed, optional,
+    defaults, removed, error, handled, returns.
+    """
+    flags = flags if flags is not None else {}
     notes: list[str] = []
     severity = 5
     name = item["name"]
@@ -240,31 +263,39 @@ def _call_notes(item: dict, call: dict, facts: _Facts) -> tuple[list[str], int]:
     if signature and call["call"]:
         added, removed, defaults = param_delta(signature["before"], signature["after"], item.get("file") or "")
         missing = _missing_required(call["call"], signature["after"], added, item.get("file") or "")
+        flags["missing"] = missing
         if missing:
             notes.append(f"{name} now requires {_join(missing)}; this call does not pass {'it' if len(missing) == 1 else 'them'}.")
             severity = min(severity, 0)
         passed = [param for param, optional in added if not optional and param not in missing and _countable(call["call"])]
+        flags["passed"] = passed
         if passed:
             notes.append(f"{name} now requires {_join(passed)}; this call passes {'it' if len(passed) == 1 else 'them'}.")
             severity = min(severity, 4)
         optional = [param for param, opt in added if opt]
+        flags["optional"] = optional
         if optional:
             notes.append(f"{_join(optional)} {'is' if len(optional) == 1 else 'are'} optional, so this call gets the default.")
             severity = min(severity, 3)
         for param, old, new in defaults:
             if _countable(call["call"]) and not _passes_param(call["call"], signature["after"], param, item.get("file") or ""):
                 notes.append(f"The default of {param} changes from {old} to {new}, and this call relies on it.")
+                flags.setdefault("defaults", []).append((param, old, new))
                 severity = min(severity, 2)
         if removed:
+            flags["removed"] = removed
             notes.append(f"{name} no longer takes {_join(removed)}.")
             severity = min(severity, 1)
     error = next((c for c in item["changes"] if c["category"] == "error" and c.get("summary")), None)
     if error:
         handled = facts.contexts.get((call["caller"], name))
+        flags["error"] = _first_sentence(error["summary"])
+        flags["handled"] = handled
         wrap = "" if handled is None else (" The call is inside a try block." if handled else " The call is not inside a try block.")
         notes.append(_first_sentence(error["summary"]) + wrap)
         severity = min(severity, 1 if handled is False else 2)
     if any(c["category"] == "return" for c in item["changes"]):
+        flags["returns"] = True
         notes.append(f"The value {name} returns changed.")
         severity = min(severity, 3)
     if not notes:

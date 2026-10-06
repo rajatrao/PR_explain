@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     llm_timeout_ms: int = 180000
     explanation_packet_char_budget: int = 32000
+    # Second model call that writes the Review tab from the diff. Rule findings show either way.
+    review_model_enabled: bool = True
     database_url: str = "sqlite:///./pr_explain.db"
     github_app_id: str | None = None
     github_app_private_key: str | None = None
