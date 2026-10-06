@@ -25,6 +25,7 @@ from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_flow import build_behavior_flows
 from app.explanation.behavior_facts import build_behavior_facts
 from app.explanation.behavioral_changes import build_behavioral_section
+from app.explanation.schema import ReviewReport
 from app.explanation.review_diagram import REVIEW_DIAGRAM_LEGEND, build_review_diagram
 from app.explanation.impact import build_impact_facts, build_impact_section
 from app.explanation.details import build_details
@@ -430,7 +431,8 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             symbols=run.symbols,
             relationships=run.relationships_,
         ),
-        "changes": build_file_changes(run.evidences, run.claims, _patches_for_run(run)),
+        "changes": build_file_changes(run.evidences, run.claims, (patches := _patches_for_run(run))),
+        "review": _review_for_run(explanations, run, repository.full_name, revision.head_sha, patches),
         "details": build_details(
             symbols=run.symbols,
             relationships=run.relationships_,
@@ -443,6 +445,23 @@ def _detail(session: Session, run: AnalysisRun) -> dict:
             review_questions=_document_texts(explanations, "review_questions"),
         ),
     }
+
+
+def _review_for_run(explanations: dict, run: AnalysisRun, repo: str, sha: str, patches: dict[str, str]) -> dict:
+    """The stored review (rules plus the screened model review), or the rule review for older runs."""
+    from types import SimpleNamespace
+
+    from app.explanation.review_report import build_review
+
+    stored = _quick_field(explanations, "review")
+    if stored:
+        try:
+            return {**ReviewReport.model_validate(stored).model_dump(mode="json"), "source": "stored"}
+        except Exception:
+            pass
+    facts = SimpleNamespace(symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences)
+    report = build_review(stored=facts, repo=repo, sha=sha, patches=patches)
+    return {**report.model_dump(mode="json"), "source": "rules"}
 
 
 def _patches_for_run(run: AnalysisRun) -> dict[str, str]:

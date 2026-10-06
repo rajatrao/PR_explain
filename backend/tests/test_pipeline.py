@@ -163,7 +163,7 @@ def test_empty_statements_keep_packet_explanation(db):
     )
     db.expire_all()
     stored = db.get(AnalysisRun, run.id)
-    assert provider.calls == 1
+    assert provider.calls == 2  # Explain, then the Review tab
     assert stored.analysis_status == "succeeded"
     assert stored.explanation_status == "succeeded"
     assert stored.explanation_error is None
@@ -251,9 +251,8 @@ def test_new_sha_replaces_comment_body(db):
     assert "| Area | Reason | Evidence file |" not in details_body
     assert "### Impact" in explain_body
     assert explain_body.index("### Behavioral Changes") < explain_body.index("### Impact")
-    assert "### Reviewer Attention" not in details_body
-    assert "### Reviewer Attention" in review_body
-    assert "### Review questions" in review_body
+    assert "### Reviewer" not in details_body
+    assert "### Overall review risk:" in review_body
     assert "one-hop" not in latest.lower()
     assert "insecure" not in latest.lower()
     assert "score" not in latest.lower()
@@ -522,6 +521,8 @@ class _NarratingProvider:
     def explain(self, request):  # noqa: ANN001
         self.calls += 1
         self.packets.append(request.packet)
+        if "REVIEW FACTS" in request.user_prompt:
+            return LLMResult(content=json.dumps(_review_reply(request.user_prompt)), latency_ms=1, model="fake-model")
         # Like the real quick prompt: a summary and empty statement arrays. The pipeline then keeps its
         # packet-built document, and the narrative must still be read from this raw reply.
         document = {
@@ -567,6 +568,48 @@ class _NarratingProvider:
         return LLMResult(content=json.dumps(document), latency_ms=1, model="fake-model")
 
 
+def _review_reply(prompt: str) -> dict:
+    """A review with one grounded attention area and one invented bug."""
+    block = prompt.split("REVIEW FACTS\n", 1)[1].split("\n\nTASK", 1)[0]
+    facts = json.loads(block)
+    caller = next(fact for fact in facts if fact["kind"] == "caller")
+    return {
+        "attention": [
+            {
+                "area": "Session lifetime at sign-in",
+                "why_it_matters": "Every sign-in path creates a session through createSession.",
+                "what_changed": "createSession now takes ttlMs and puts it in the token.",
+                "what_could_go_wrong": "A caller passing the wrong unit gets sessions with the wrong lifetime.",
+                "involved": ["createSession", "login"],
+                "priority": "High",
+                "fact_ids": [caller["id"]],
+                "locations": [caller["location"]],
+            }
+        ],
+        "bugs": [
+            {
+                "finding": "Sessions are no longer written to `redisClient`.",
+                "evidence": "The cache write was removed.",
+                "scenario": "A user signs in.",
+                "impact": "Sessions are lost on restart.",
+                "confidence": "High",
+                "status": "confirmed",
+                "fact_ids": [caller["id"]],
+            }
+        ],
+        "top_questions": [
+            {
+                "question": "Is ttlMs in milliseconds at every call site?",
+                "why_ask": "The callers pass 3600 and 7200.",
+                "relevant_code": caller["location"],
+                "fact_ids": [caller["id"]],
+            }
+        ],
+        "overall_risk": "Low",
+        "risk_reason": "The contract change is applied at every caller.",
+    }
+
+
 def test_model_behavioral_narrative_is_screened_and_shown(db):
     snapshot = load_oauth_snapshot()
     run = _revision(db, snapshot)
@@ -576,7 +619,7 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     comments = MemoryComments()
     process_available_job(db, settings, snapshot_source=source, provider=provider)
     process_available_job(db, settings, snapshot_source=source, provider=provider, comment_client=comments)
-    assert provider.calls == 1
+    assert provider.calls == 2, "one call for Explain, one for the Review tab"
     assert provider.packets[0].behavior_facts, "the quick packet carries behavior facts"
 
     client = TestClient(app)
@@ -596,6 +639,17 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     details = posted.split("## Details for", 1)[1].split("## Review for", 1)[0]
     assert "### Old flow vs New flow" in details
     assert "### Old flow vs New flow" not in posted.split("## Details for", 1)[0]
+    review = body["review"]
+    assert review["source"] == "stored"
+    assert review["attention"][0]["area"] == "Session lifetime at sign-in"
+    # The invented bug names code that is in neither the diff nor the facts, so it is dropped.
+    assert all("redisClient" not in bug["finding"] for bug in review["bugs"])
+    assert review["top_questions"][0]["question"] == "Is ttlMs in milliseconds at every call site?"
+    # The rule floor raises the model's Low to the rules' Medium (an untested changed function).
+    assert review["overall_risk"] == "Medium"
+    review_md = posted.split("## Review for", 1)[1]
+    assert "**High · Session lifetime at sign-in**" in review_md
+    assert "redisClient" not in review_md
 
 
 def test_missing_narrative_reason_is_shown(db):

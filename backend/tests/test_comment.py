@@ -133,12 +133,9 @@ def test_comment_is_the_quick_story_and_replaces_sha():
     assert "### Risk Areas" not in details
     assert "### Unknowns" not in details
     assert "### Unknowns" not in second
-    assert "### Reviewer Attention" not in details
-    assert "### Review questions" not in details
-    assert "### Reviewer Attention" in review
+    assert "### Reviewer" not in details
+    assert "### Overall review risk:" in review
     assert "Suggested review areas" not in review
-    assert "### Review questions" in review
-    assert review.index("### Reviewer Attention") < review.index("### Review questions")
     assert "login calls createSession" not in second
     assert "**FACT**" not in second
     assert "Architecture" not in second
@@ -185,8 +182,6 @@ _DETAILS_ORDER = [
     "### Key Changes",
     "### Shared code",
     "### Callers outside the diff",
-    "<summary>Tests</summary>",
-    "<summary>Unchanged boundary</summary>",
 ]
 
 
@@ -236,7 +231,7 @@ def test_combined_comment_reuses_explain_and_retires_details():
     assert "Change Overview" not in details
     assert "```mermaid" in explain
     assert "### Diagram" not in explain
-    assert review.index("### Reviewer Attention") < review.index("### Review questions")
+    assert "### Overall review risk:" in review
     assert "### Unknowns" not in details
     assert "### Unknowns" not in first
     assert "No dependency facts are in this packet" not in details
@@ -333,8 +328,7 @@ def test_combined_comment_omits_trace_and_updates_in_place():
     assert "view=details" not in first
     explain, rest = first.split("## Details for", 1)
     _details, review = rest.split("## Review for", 1)
-    assert "### Reviewer Attention" in review
-    assert "### Review questions" in review
+    assert "### Overall review risk:" in review
     assert "trace" not in review.lower()
 
     first_id = publish_combined_comment(comments, "acme/app", 7, first)
@@ -369,9 +363,9 @@ def test_combined_comment_collapses_each_file_after_what_changed():
     details, review = rest.split("## Review for", 1)
     assert "### What changed" not in details
     assert details.index("### Key Changes") < details.index("### Changes") < details.index("### Shared code")
-    assert "<summary>Tests</summary>" in details
-    assert "<summary>Unchanged boundary</summary>" in details
-    assert details.count("<details>") == 4
+    assert "<summary>Tests</summary>" not in details
+    assert "<summary>Unchanged boundary</summary>" not in details
+    assert details.count("<details>") == 2
     assert "<details open" not in body
     assert "<summary>src/login.ts</summary>" in details
     assert "<summary>src/session.ts</summary>" in details
@@ -402,7 +396,7 @@ def test_combined_comment_truncates_large_diffs_and_keeps_paths():
     details, review = rest.split("## Review for", 1)
     assert f"## Explain for `{NEW}`" in body
     assert f"## Review for `{NEW}`" in body
-    assert "### Reviewer Attention" in review
+    assert "### Overall review risk:" in review
     assert "<summary>src/big.ts</summary>" in details
     assert "<summary>src/small.ts</summary>" in details
     assert "<details open" not in body
@@ -423,12 +417,9 @@ def test_details_comment_collapses_long_sections_and_omits_unknowns():
     assert "### Unknowns" not in details
     assert "No dependency facts are in this packet" not in details
     assert "No database or schema facts are in this packet" not in details
-    tests = details.split("<summary>Tests</summary>", 1)[1].split("</details>", 1)[0]
+    assert "<summary>Tests</summary>" not in details
     assert "<details open" not in details
-    assert "more</summary>" not in tests
-    assert "test_fn0.py" in tests
-    assert "test_fn21.py" in tests
-    assert "<summary>Unchanged boundary</summary>" in details
+    assert "<summary>Unchanged boundary</summary>" not in details
     explain_part = body.split("## Details for", 1)[0]
     system = explain_part.split("### Impact", 1)[1].split("## ", 1)[0]
     assert "test_fn0.py" not in system

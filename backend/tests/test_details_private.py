@@ -57,11 +57,10 @@ def test_details_sections_drop_private_python_and_trim_mixed_sentences():
         assert banned not in blob
     assert "create_llm_provider" in blob
     assert "explain" in blob
-    assert "test_provider.py" in blob
     assert "create_llm_provider, so its behavior is not unchanged." in blob or "create_llm_provider" in blob
 
 
-def test_review_sections_hide_private_python():
+def test_details_has_no_review_sections_and_hides_private_python():
     symbols = [
         _Symbol("explain", "backend/app/llm/provider.py"),
         _Symbol("create_llm_provider", "backend/app/llm/provider.py"),
@@ -91,20 +90,9 @@ def test_review_sections_hide_private_python():
         sha="b" * 40,
         review_questions=review_questions,
     )
-    attention = next(section for section in details["sections"] if section["title"] == "Reviewer Attention")
-    assert not any(
-        subsection.get("title") == "Suggested review areas" for subsection in attention.get("subsections") or []
-    )
-    questions = next(section for section in details["sections"] if section["title"] == "Review questions")
-    blobs = [
-        " ".join(f"{row.get('label')} {row.get('value')}" for row in attention.get("rows") or []),
-        " ".join(f"{row.get('label')} {row.get('value')}" for row in questions.get("rows") or []),
-    ]
-    joined = " ".join(blobs)
+    # Review content moved to the Review tab's report; Details no longer carries it.
+    titles = {section["title"] for section in details["sections"]}
+    assert not titles & {"Reviewer Attention", "Review questions", "Tests", "Unchanged boundary"}
+    blob = render_details_markdown(details)
     for banned in ("_configured", "_openai_provider", "_provider_or_failure"):
-        assert banned not in joined
-    assert "explain" in joined
-    assert "create_llm_provider" in joined
-    question_values = [row.get("value") or "" for row in questions.get("rows") or []]
-    assert any("create_llm_provider" in value for value in question_values)
-    assert all("_configured" not in value for value in question_values)
+        assert banned not in blob

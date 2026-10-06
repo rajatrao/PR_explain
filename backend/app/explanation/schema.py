@@ -219,6 +219,98 @@ class ImpactNarrative(BaseModel):
     areas: list[ImpactAreaNote] = Field(default_factory=list)
 
 
+# --- Review tab -----------------------------------------------------------------------------
+
+Priority = Literal["Critical", "High", "Medium", "Low"]
+Confidence = Literal["High", "Medium", "Low"]
+TestGroup = Literal[
+    "Happy path",
+    "Boundary cases",
+    "Error/failure paths",
+    "Regression cases",
+    "Concurrency/async cases",
+    "Data migration/backward compatibility",
+    "Security/authorization cases",
+]
+
+
+class ReviewFact(BaseModel):
+    """One rule-derived fact the review may rest on (r1, r2, …)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    kind: str
+    text: str
+    location: str | None = None
+    severity: str | None = None
+
+
+class _Grounded(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    # Fact ids (b…, i…, r…) and diff locations ("path:line") the item rests on.
+    fact_ids: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    # Set when the item comes from rules rather than the model. Hidden from the model's schema.
+    source: SkipJsonSchema[str] = "model"
+
+
+class AttentionArea(_Grounded):
+    area: str
+    why_it_matters: str
+    what_changed: str
+    what_could_go_wrong: str
+    involved: list[str] = Field(default_factory=list)
+    priority: Priority = "Medium"
+
+
+class ReviewerQuestion(_Grounded):
+    question: str
+
+
+class PotentialBug(_Grounded):
+    finding: str
+    evidence: str
+    scenario: str
+    impact: str
+    confidence: Confidence = "Low"
+    status: Literal["confirmed", "possible"] = "possible"
+
+
+class MissingTest(_Grounded):
+    group: TestGroup
+    scenario: str
+    verifies: str
+
+
+class SafeArea(_Grounded):
+    area: str
+    why: str
+
+
+class TopQuestion(_Grounded):
+    question: str
+    why_ask: str
+    relevant_code: str
+
+
+class ReviewReport(BaseModel):
+    """The Review tab: where to spend review time, written from the diff and the review facts."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attention: list[AttentionArea] = Field(default_factory=list)
+    questions: list[ReviewerQuestion] = Field(default_factory=list)
+    bugs: list[PotentialBug] = Field(default_factory=list)
+    missing_tests: list[MissingTest] = Field(default_factory=list)
+    safe: list[SafeArea] = Field(default_factory=list)
+    top_questions: list[TopQuestion] = Field(default_factory=list)
+    undetermined: list[str] = Field(default_factory=list)
+    overall_risk: Priority = "Low"
+    risk_reason: str = ""
+
+
 class ExplanationDocument(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -235,6 +327,9 @@ class ExplanationDocument(BaseModel):
     behavior_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
     impact: ImpactNarrative | None = None
     impact_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
+    # Review tab report; written by a separate model call, so hidden from this schema.
+    review: SkipJsonSchema[ReviewReport | None] = None
+    review_screening: SkipJsonSchema[list[str]] = Field(default_factory=list)
 
     def statements(self) -> list[Statement]:
         return [
