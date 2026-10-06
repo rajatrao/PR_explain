@@ -12,6 +12,7 @@ Rules:
 - Pay attention to: business logic, control flow, state transitions, API request/response behavior, queries and data mutations, transactions, concurrency, async work, caching, retries and idempotency, error handling, null/empty/unexpected input, authn/authz, validation, backward compatibility, performance, resource use, external services, configuration, feature flags, logging, security, changes that affect existing callers, and new behavior no test covers.
 - Every item must list fact_ids (b…, i…, r…) and/or locations ("path:line" from DIFF or a fact) it rests on. Items with neither are discarded.
 - Only name files, functions, variables, and values that appear in DIFF or the facts. Anything else is discarded.
+- Never name a private helper (a name starting with an underscore, such as `_detail`) or a dunder method such as `__repr__` in any item, question, or the risk reason; describe the public function or flow that uses it instead. Items that name one are discarded.
 - Do not invent bugs. A bug is "confirmed" only when a REVIEW FACT shows it and confidence is High; otherwise it is "possible". If you cannot determine something, say so in the item it affects.
 - No generic advice, no formatting, naming, or style nits, and no "is this tested?" style questions unless you say exactly why it matters here.
 
