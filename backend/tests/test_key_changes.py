@@ -147,3 +147,23 @@ def test_private_removed_helpers_are_not_key_changes():
     details = build_details(symbols=[], relationships=[], evidences=evidences, claims=claims, sections=[], repo="acme/shop", sha="b" * 40)
     key = next(section["rows"] for section in details["sections"] if section["title"] == "Key Changes")
     assert all("(removed)" not in row["label"] for row in key)
+
+
+def test_shared_code_never_shows_private_or_empty_callers():
+    from app.analyzer.types import Relationship
+    from app.explanation.details import _shared_rows
+
+    target = _fn("t", "render_details", "app/details.py", 1, 5, changed=True)
+    symbols = [target]
+    rels = [
+        Relationship(id=f"r{i}", type="CALLS", source_id=f"s{i}", target_id="t", source_name=name,
+                     target_name="render_details", source_file=path, target_file="app/details.py")
+        for i, (name, path) in enumerate([("_detail", "app/api.py"), ("_other", "app/api.py"), ("test_it", "tests/test_x.py")])
+    ]
+    assert _shared_rows(symbols, rels) == [{"label": "Shared code", "value": "none found", "href": None}]
+    rels.append(Relationship(id="r9", type="CALLS", source_id="s9", target_id="t", source_name="publish",
+                             target_name="render_details", source_file="app/comment.py", target_file="app/details.py"))
+    rels.append(Relationship(id="r8", type="CALLS", source_id="s8", target_id="t", source_name="show",
+                             target_name="render_details", source_file="app/api.py", target_file="app/details.py"))
+    rows = _shared_rows(symbols, rels)
+    assert rows[0]["value"] == "called from 2 places: publish (app/comment.py), show (app/api.py)"

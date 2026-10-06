@@ -82,8 +82,8 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert ":" in changed["value"]
 
     shared = next(row for row in rows["Shared code"] if row["label"] == "createSession")
-    assert shared["value"].startswith("callers: ")
-    assert shared["value"].count(",") >= 1
+    assert shared["value"].startswith("called from 3 places: ")
+    assert "login (src/login.ts)" in shared["value"]
 
     assert any(row["label"].endswith(".ts") for row in rows["Callers outside the diff"])
 
