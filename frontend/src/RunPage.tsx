@@ -513,11 +513,6 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
           <p className="impact-why">
             <InlineCode text={area.summary} />
           </p>
-          {area.who_notices ? (
-            <p className="behavior-impact">
-              <span className="detail-label">Who notices</span> <InlineCode text={area.who_notices} />
-            </p>
-          ) : null}
           <EvidenceLinks items={area.evidence} />
         </div>
       ))}
@@ -576,11 +571,6 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
               </p>
             </div>
           </div>
-          {change.impact ? (
-            <p className="behavior-impact">
-              <span className="detail-label">Who notices</span> <InlineCode text={change.impact} />
-            </p>
-          ) : null}
           <EvidenceLinks items={change.evidence} />
         </div>
       ))}

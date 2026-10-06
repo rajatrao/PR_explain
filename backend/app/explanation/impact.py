@@ -471,8 +471,6 @@ def render_impact_markdown(section: dict) -> str:
     for area in areas:
         lines.append(f"**{area['title']}** ({area['severity']})")
         lines.append(f"- {area['summary']}")
-        if area.get("who_notices"):
-            lines.append(f"- **Who notices:** {area['who_notices']}")
         if area.get("evidence"):
             lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in area["evidence"]))
         lines.append("")

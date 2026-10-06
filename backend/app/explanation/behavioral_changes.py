@@ -187,8 +187,6 @@ def render_behavioral_changes_markdown(section: dict) -> str:
         lines.append(f"**{change['title']}**")
         lines.append(f"- **Before:** {change['before']}")
         lines.append(f"- **After:** {change['after']}")
-        if change.get("impact"):
-            lines.append(f"- **Who notices:** {change['impact']}")
         if change.get("evidence"):
             lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in change["evidence"]))
         lines.append("")
