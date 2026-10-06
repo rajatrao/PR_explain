@@ -168,6 +168,12 @@ def execute_explain(
         )
         document.impact_screening = [] if document.impact else impact_screening[:8]
         impact_kept = len(document.impact.areas) if document.impact else 0
+        if (document.behavioral_changes is None and packet.behavior_facts) or (
+            document.impact is None and packet.impact_facts
+        ):
+            _retry_narratives(provider, packet, depth, document, screening, impact_screening)
+            kept = len(document.behavioral_changes.changes) if document.behavioral_changes else 0
+            impact_kept = len(document.impact.areas) if document.impact else 0
         review_screening: list[str] = []
         document.review = _review(session, run, settings, provider, packet, review_screening)
         document.review_screening = review_screening[:12]
@@ -374,6 +380,39 @@ def _generate(provider: LLMProvider, packet: ExplanationPacket, depth: str):
     if kept is not None:
         return kept, repaired
     return repaired_validation, repaired
+
+
+def _retry_narratives(provider, packet, depth, document, screening: list[str], impact_screening: list[str]) -> None:
+    """Ask once more for Behavioral Changes and Impact when every item was dropped, telling the model
+    why. The retry is screened the same way; a failed call keeps what the first reply gave."""
+    errors: list[str] = []
+    if document.behavioral_changes is None and packet.behavior_facts:
+        errors += [f"behavioral_changes: {reason}" for reason in screening[:6]] or ["behavioral_changes was missing"]
+    if document.impact is None and packet.impact_facts:
+        errors += [f"impact: {reason}" for reason in impact_screening[:6]] or ["impact was missing"]
+    errors.append(
+        "Rewrite only the dropped sections. Cite the fact ids each item rests on, describe the same subject as "
+        "those facts, and use only numbers, quoted values, and failures that appear in them."
+    )
+    try:
+        retried = provider.explain(_request(packet, depth, errors))
+    except Exception as exc:  # the first reply stands
+        screening.append(f"retry failed: {type(exc).__name__}")
+        return
+    if document.behavioral_changes is None and packet.behavior_facts:
+        again: list[str] = []
+        document.behavioral_changes = screen_narrative(
+            _raw_field(retried.content, "behavioral_changes"), packet.behavior_facts, again
+        )
+        screening.extend(f"retry: {reason}" for reason in again)
+        document.behavior_screening = [] if document.behavioral_changes else screening[:8]
+    if document.impact is None and packet.impact_facts:
+        again = []
+        document.impact = screen_impact(
+            _raw_field(retried.content, "impact"), packet.behavior_facts, packet.impact_facts, again
+        )
+        impact_screening.extend(f"retry: {reason}" for reason in again)
+        document.impact_screening = [] if document.impact else impact_screening[:8]
 
 
 def _raw_field(content: str | None, field: str) -> dict | None:

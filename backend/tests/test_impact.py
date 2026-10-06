@@ -2,6 +2,7 @@ from app.analyzer.surface import find_surfaces
 from app.analyzer.types import Claim, Evidence, FileChange
 from app.analyzer.review_signals import _checks_result, _inside_try
 from app.explanation.impact import (
+    NO_SUMMARY,
     build_impact,
     build_impact_facts,
     build_impact_section,
@@ -239,12 +240,12 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
         assert name not in markdown
 
 
-def test_missing_impact_summary_shows_a_notice_with_the_reason():
+def test_missing_impact_summary_shows_a_short_notice():
     facts = _summary_facts()
     section = build_impact_section(narrative=None, behavior_facts=[], impact_facts=facts, reasons=["the model returned no impact"])
     assert section["source"] == "none"
-    assert section["overview"].endswith("Reason: the model returned no impact.")
-    assert render_impact_markdown(section).startswith("### Impact\n\nAn impact summary is not available")
+    assert section["overview"] == NO_SUMMARY
+    assert render_impact_markdown(section) == "### Impact\n\n" + NO_SUMMARY
 
 
 

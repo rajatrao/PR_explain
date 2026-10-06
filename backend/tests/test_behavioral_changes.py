@@ -324,3 +324,59 @@ def test_section_links_each_change_to_the_diff_lines_it_rests_on():
     # A stored narrative is screened again: one that no longer matches the facts is not shown.
     stale = _one("Password resets", "Previously, reset emails were sent.", "With this change, they are queued.", fact_ids=("b3",))
     assert build_behavioral_section(narrative=stale, facts=facts, prescreened=True)["changes"] == []
+
+
+def test_plain_words_about_the_changed_function_are_on_topic():
+    """'Session expiration' is about createSession even though the changed line only says sess_."""
+    facts = [
+        BehaviorFunctionFact(
+            function="createSession",
+            file="src/session.ts",
+            public=True,
+            reached_from=["login"],
+            changes=[
+                BehaviorChangeFact(
+                    id="b1", claim_id="c1", kind="return", before="return `sess_${userId}`;", after="return `sess_${userId}_${ttlMs}`"
+                )
+            ],
+        )
+    ]
+    narrative = _one(
+        "Session Expiration Handling",
+        "Previously, a session token identified only the user.",
+        "With this change, each token also records how long it stays valid.",
+    )
+    assert screen_narrative(narrative, facts) is not None
+
+
+def test_retry_recovers_a_narrative_that_was_dropped():
+    import json
+    from types import SimpleNamespace
+
+    from app.explanation.schema import ExplanationDocument
+    from app.jobs.pipeline import _retry_narratives
+
+    good = _good_narrative().model_dump()
+
+    class Provider:
+        def __init__(self):
+            self.requests = []
+
+        def explain(self, request):
+            self.requests.append(request)
+            return SimpleNamespace(content=json.dumps({"behavioral_changes": good}), model="m")
+
+    packet = SimpleNamespace(behavior_facts=_facts(), impact_facts=[])
+    document = ExplanationDocument(summary="s")
+    provider = Provider()
+    screening = ["dropped 'Password resets': shares no subject with the facts it cites"]
+    import app.jobs.pipeline as pipeline
+
+    original = pipeline._request
+    pipeline._request = lambda packet, depth, errors: SimpleNamespace(errors=errors)
+    try:
+        _retry_narratives(provider, packet, "quick", document, screening, [])
+    finally:
+        pipeline._request = original
+    assert document.behavioral_changes is not None and document.behavioral_changes.changes
+    assert any("Password resets" in error for error in provider.requests[0].errors)
