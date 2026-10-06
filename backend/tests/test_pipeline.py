@@ -649,7 +649,9 @@ def test_model_behavioral_narrative_is_screened_and_shown(db):
     # The rule floor raises the model's Low to the rules' Medium (an untested changed function).
     assert review["overall_risk"] == "Medium"
     review_md = posted.split("## Review for", 1)[1]
-    assert "**High · Session lifetime at sign-in**" in review_md
+    # The model said High, but the only rule fact it cites is low, so the area is capped one level above it.
+    assert "**Medium · Session lifetime at sign-in**" in review_md
+    assert "The contract change is applied at every caller." not in review_md  # argued for Low
     assert "redisClient" not in review_md
 
 

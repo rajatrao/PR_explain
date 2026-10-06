@@ -835,6 +835,21 @@ function ReviewView({ run }: { run: RunDetail }) {
           Overall review risk: <span className="risk-badge">{report.overall_risk}</span>
         </h2>
         <p>{report.risk_reason}</p>
+        {report.risk_drivers && report.risk_drivers.length > 0 ? (
+          <>
+            <h3>Evidence</h3>
+            <ul className="review-questions">
+              {report.risk_drivers.map((driver, index) => (
+                <li key={`${index}-${driver.text}`}>
+                  <span className={`priority priority-${driver.level.toLowerCase()}`}>{driver.level}</span>{" "}
+                  {driver.text}
+                  {driver.location ? <> — {link(driver.location)}</> : null}
+                  {driver.source === "model" ? <span className="kicker"> (model finding)</span> : null}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
       </section>
     </div>
   );

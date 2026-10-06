@@ -32,6 +32,7 @@ from app.explanation.schema import (
     ReviewerQuestion,
     ReviewFact,
     ReviewReport,
+    RiskDriver,
     SafeArea,
     TopQuestion,
 )
@@ -179,12 +180,22 @@ class _Ground:
                 self.ids[change.id] = "behavior"
         for fact in impact_facts or []:
             self.ids[fact.id] = "impact"
+        self.rule_level: dict[str, str] = {}
         for fact in review_facts or []:
             self.ids[fact.id] = "rule"
+            self.rule_level[fact.id] = _SEVERITY_TO_PRIORITY.get(fact.severity or "low", "Low")
         self.lines_by_file = lines_by_file
         self.fact_files = {
             (fact.location or "").split(":", 1)[0] for fact in review_facts or [] if fact.location
         } | {fact.file for fact in behavior_facts or [] if fact.file}
+        self.raw = "\n".join(
+            [
+                diff,
+                json.dumps([f.model_dump() for f in behavior_facts or []]),
+                json.dumps([f.model_dump() for f in impact_facts or []]),
+                json.dumps([f.model_dump() for f in review_facts or []]),
+            ]
+        )
         self.corpus = _normalize(
             "\n".join(
                 [
@@ -244,6 +255,8 @@ def screen_review(raw: dict | None, ground: _Ground, reasons: list[str] | None =
             if issue:
                 log.append(f"{field}[{index}]: {issue}")
                 continue
+            if isinstance(parsed, AttentionArea):
+                parsed.priority = _capped_priority(parsed, ground)
             if isinstance(parsed, PotentialBug) and parsed.status == "confirmed":
                 if parsed.confidence != "High" or not any(ground.ids.get(i) == "rule" for i in parsed.fact_ids):
                     parsed.status = "possible"
@@ -554,17 +567,7 @@ def rule_review(
     if not diff_available:
         report.undetermined.append("The diff text was not available, so this review rests on the stored facts only.")
 
-    worst = min((_RANK[_SEVERITY_TO_PRIORITY.get(f.severity or "low", "Low")] for f in review_facts), default=3)
-    worst = min([worst, *(_RANK[a.priority] for a in report.attention)]) if report.attention else worst
-    report.overall_risk = next(name for name, rank in _RANK.items() if rank == worst)
-    top = next((f for f in review_facts if _RANK[_SEVERITY_TO_PRIORITY.get(f.severity or "low", "Low")] == worst), None)
-    report.risk_reason = (
-        f"The most severe finding from the analysis is {top.severity}: {_first_sentence(top.text)}"
-        + (f" {len(report.bugs)} potential bug{'s' if len(report.bugs) != 1 else ''} listed below." if report.bugs else "")
-        if top
-        else "No finding from the analysis is above low severity."
-    )
-    return report
+    return assess_risk(report, review_facts)
 
 
 def _test_group(change: dict) -> tuple[str | None, str]:
@@ -584,6 +587,145 @@ def _test_group(change: dict) -> tuple[str | None, str]:
     return None, ""
 
 
+# --- overall risk -----------------------------------------------------------------------------
+
+RISK_DRIVER_CAP = 4
+
+
+def assess_risk(report: ReviewReport, review_facts: list[ReviewFact], *, model=None, ground=None, reasons=None) -> ReviewReport:
+    """Set the overall risk from evidence, never from the model's say-so.
+
+    * The floor is the most severe rule finding (r…): each is a stored fact with a location.
+    * The model may raise the level by one step above that floor, and only when one of its own
+      kept items (a potential bug, or an attention area at that priority) cites a rule fact or a
+      diff line. Critical also needs a confirmed bug, which only a rule fact can confirm.
+    * The reason is written from those findings. The model's own sentence is added only when it
+      argued for the level the evidence supports, names nothing outside the diff and facts, and
+      states no number, quoted value, or failure the evidence lacks.
+    """
+    log = reasons if reasons is not None else []
+    drivers = [
+        RiskDriver(
+            text=_first_sentence(fact.text),
+            level=_SEVERITY_TO_PRIORITY.get(fact.severity or "low", "Low"),
+            location=fact.location,
+            fact_ids=[fact.id],
+        )
+        for fact in review_facts or []
+        if fact.kind != "coverage"
+    ]
+    drivers.sort(key=lambda driver: _RANK[driver.level])
+    floor = drivers[0].level if drivers else "Low"
+    level = floor
+    raised = None
+    if model is not None and _RANK[model.overall_risk] < _RANK[floor]:
+        target = next(name for name, rank in _RANK.items() if rank == _RANK[floor] - 1)
+        raised = _model_support(report, target)
+        if raised is None:
+            log.append(f"risk: the model's {model.overall_risk} has no grounded finding above {floor}")
+        else:
+            level = target
+            drivers.insert(0, raised)
+    report.overall_risk = level
+    shown = [driver for driver in drivers if _RANK[driver.level] <= _RANK[level] + 1][:RISK_DRIVER_CAP]
+    report.risk_drivers = shown
+    report.risk_reason = _risk_reason(level, floor, drivers, raised)
+    note = (model.risk_reason or "").strip() if model is not None else ""
+    if note and model.overall_risk != level:
+        # The model argued for a level the evidence does not support; its reasoning is not shown.
+        log.append(f"risk_reason: written for {model.overall_risk}, but the evidence supports {level}")
+        note = ""
+    if note and ground is not None:
+        problem = _risk_note_problem(note, level, ground)
+        if problem:
+            log.append(f"risk_reason: {problem}")
+        else:
+            report.risk_reason += " " + note
+    return report
+
+
+def stored_review(report: ReviewReport | dict, *, stored, repo, sha) -> ReviewReport:
+    """A review read back from storage, ready to show. One stored before the risk had evidence
+    attached is reassessed from the rule findings alone."""
+    if isinstance(report, dict):
+        report = ReviewReport.model_validate(report)
+    if not report.risk_drivers:
+        facts = build_review_facts(
+            symbols=stored.symbols, relationships=stored.relationships, claims=stored.claims,
+            evidences=stored.evidences, repo=repo, sha=sha,
+        )
+        report = assess_risk(report.model_copy(deep=True), facts)
+    return finalize_review(report)
+
+
+def _model_support(report: ReviewReport, target: str) -> RiskDriver | None:
+    for bug in report.bugs:
+        if bug.source != "model" or not (bug.fact_ids or bug.locations):
+            continue
+        if target == "Critical" and bug.status != "confirmed":
+            continue
+        if bug.confidence == "Low":
+            continue
+        return RiskDriver(
+            text=bug.finding,
+            level=target,
+            location=(bug.locations or [None])[0],
+            fact_ids=bug.fact_ids,
+            source="model",
+        )
+    if target == "Critical":
+        return None
+    for area in report.attention:
+        if area.source == "model" and _RANK[area.priority] <= _RANK[target] and (area.fact_ids or area.locations):
+            return RiskDriver(
+                text=f"{area.area}: {_first_sentence(area.what_could_go_wrong)}",
+                level=target,
+                location=(area.locations or area.involved or [None])[0],
+                fact_ids=area.fact_ids,
+                source="model",
+            )
+    return None
+
+
+def _risk_reason(level: str, floor: str, drivers: list[RiskDriver], raised: RiskDriver | None) -> str:
+    if not drivers:
+        return (
+            "Low: the analysis found no caller outside the diff that the change affects, no changed failure "
+            "without handling, no stale or missing test for changed code, and no changed route, data, or config."
+        )
+    at_floor = [driver for driver in drivers if driver.level == floor and driver.source == "rules"]
+    count = len(at_floor)
+    text = f"{floor}: {count} finding{'s' if count != 1 else ''} from the analysis at this level"
+    text += f", the first being: {at_floor[0].text.rstrip('.')}." if at_floor else "."
+    if raised is not None:
+        text = (
+            f"{level}: raised one level from {floor} by a finding that cites the diff or a rule fact: "
+            f"{raised.text.rstrip('.')}. " + text
+        )
+    return text
+
+
+def _risk_note_problem(note: str, level: str, ground) -> str | None:
+    from app.explanation.behavioral_changes import _claim_problem
+
+    token = ground.unknown_code(note)
+    if token:
+        return f"uses {token}, which is not in the diff or the facts"
+    other = [name for name in _RANK if name != level and re.search(rf"\b{name}\b", note, re.IGNORECASE)]
+    if other:
+        return f"claims {other[0]} risk, but the evidence supports {level}"
+    return _claim_problem(note, ground.raw)
+
+
+def _capped_priority(area: AttentionArea, ground) -> str:
+    """A model attention area is at most one level above the most severe rule fact it cites, and at most
+    Medium when it cites none."""
+    cited = [ground.rule_level[i] for i in area.fact_ids if i in ground.rule_level]
+    ceiling = min((_RANK[level] for level in cited), default=_RANK["Low"]) - 1
+    ceiling = max(ceiling, _RANK["High"]) if cited else _RANK["Medium"]
+    return area.priority if _RANK[area.priority] >= ceiling else next(n for n, r in _RANK.items() if r == ceiling)
+
+
 # --- merge ------------------------------------------------------------------------------------
 
 
@@ -597,13 +739,6 @@ def merge_review(model: ReviewReport | None, rules: ReviewReport) -> ReviewRepor
     cited = {fact_id for bug in merged.bugs for fact_id in bug.fact_ids}
     merged.bugs = [*merged.bugs, *[bug for bug in rules.bugs if not set(bug.fact_ids) & cited]][: CAPS["bugs"]]
     merged.undetermined = _dedupe([*merged.undetermined, *rules.undetermined], lambda text: text)[:8]
-    if _RANK[rules.overall_risk] < _RANK[merged.overall_risk]:
-        merged.overall_risk = rules.overall_risk
-        merged.risk_reason = (merged.risk_reason + " " if merged.risk_reason else "") + (
-            f"Raised to {rules.overall_risk} by rule: {rules.risk_reason}"
-        )
-    if not merged.risk_reason:
-        merged.risk_reason = rules.risk_reason
     return merged
 
 
@@ -704,6 +839,12 @@ def render_review_markdown(report: ReviewReport | dict | None, *, repo: str | No
 
     out.append(f"### Overall review risk: {report.overall_risk}")
     out.append(report.risk_reason)
+    if report.risk_drivers:
+        out.extend(["", "**Evidence:**"])
+        for driver in report.risk_drivers:
+            where = f" — {link(driver.location)}" if driver.location else ""
+            origin = " _(model finding)_" if driver.source == "model" else ""
+            out.append(f"- **{driver.level}** · {driver.text}{where}{origin}")
     return "\n".join(out).strip()
 
 
@@ -848,4 +989,5 @@ def build_review(
         diff=diff, lines_by_file=lines_by_file, behavior_facts=behavior_facts, impact_facts=impact_facts, review_facts=review_facts
     )
     model = screen_review(raw, ground, log)
-    return finalize_review(merge_review(model, rules))
+    merged = merge_review(model, rules)
+    return finalize_review(assess_risk(merged, review_facts, model=model, ground=ground, reasons=log))

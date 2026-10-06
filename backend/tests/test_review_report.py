@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.explanation.review_report import (
+    assess_risk,
     build_review,
     build_review_facts,
     diff_block,
@@ -94,15 +95,71 @@ def test_screen_keeps_grounded_items_and_drops_the_rest():
     assert [q.question for q in report.questions] == ["Does nightly_job expect five retries?"]
 
 
-def test_merge_keeps_rule_bugs_and_raises_risk_to_the_rule_floor():
+def test_model_cannot_lower_the_risk_below_the_rule_floor():
     stored = _stored()
+    facts, ground = _ground(stored)
     rules = build_review(stored=stored, repo="acme/shop", sha="b" * 40, patches={"app/billing.py": PATCH})
     model = ReviewReport(overall_risk="Low", risk_reason="Looks fine.")
-    model.attention = []
-    merged = merge_review(model, rules)
+    merged = assess_risk(merge_review(model, rules), facts, model=model, ground=ground)
     assert merged.overall_risk == rules.overall_risk == "Medium"
-    assert "Raised to Medium" in merged.risk_reason
     assert merged.attention == rules.attention
+    # The model argued for Low, which the evidence does not support, so its sentence is not shown.
+    assert "Looks fine" not in merged.risk_reason
+
+
+def test_risk_rests_on_rule_findings_with_locations():
+    stored = _stored()
+    report = build_review(stored=stored, repo="acme/shop", sha="b" * 40, patches={"app/billing.py": PATCH})
+    assert report.overall_risk == "Medium"
+    assert report.risk_drivers, "every risk level above Low names its evidence"
+    top = report.risk_drivers[0]
+    assert top.level == "Medium" and top.fact_ids[0].startswith("r") and top.location
+    assert report.risk_reason.startswith("Medium: ")
+    markdown = render_review_markdown(report, repo="acme/shop", sha="b" * 40)
+    risk = markdown.split("### Overall review risk: Medium", 1)[1]
+    assert "**Evidence:**" in risk and "](https://github.com/acme/shop/blob/" in risk
+
+
+def test_model_risk_without_grounded_support_is_ignored():
+    stored = _stored()
+    facts, ground = _ground(stored)
+    rules = build_review(stored=stored, repo="acme/shop", sha="b" * 40, patches={"app/billing.py": PATCH})
+    model = ReviewReport(overall_risk="Critical", risk_reason="This is a Critical change that breaks payments everywhere.")
+    reasons: list[str] = []
+    merged = assess_risk(merge_review(model, rules), facts, model=model, ground=ground, reasons=reasons)
+    assert merged.overall_risk == "Medium"
+    assert "breaks payments" not in merged.risk_reason
+    assert any("no grounded finding above Medium" in r for r in reasons)
+
+
+def test_grounded_model_bug_raises_the_risk_by_one_level_only():
+    from app.explanation.schema import PotentialBug
+
+    stored = _stored()
+    facts, ground = _ground(stored)
+    rules = build_review(stored=stored, repo="acme/shop", sha="b" * 40, patches={"app/billing.py": PATCH})
+    bug = PotentialBug(
+        finding="A zero total now skips the charge", evidence="e", scenario="s", impact="i",
+        confidence="Medium", status="possible", locations=["app/billing.py:15"], source="model",
+    )
+    model = ReviewReport(overall_risk="Critical", bugs=[bug])
+    merged = assess_risk(merge_review(model, rules), facts, model=model, ground=ground)
+    assert merged.overall_risk == "High"  # one step above the Medium floor, never Critical
+    assert merged.risk_drivers[0].source == "model" and merged.risk_drivers[0].location == "app/billing.py:15"
+    assert merged.risk_reason.startswith("High: raised one level from Medium")
+
+
+def test_model_attention_priority_is_capped_by_its_evidence():
+    stored = _stored()
+    facts, ground = _ground(stored)
+    raw = {
+        "attention": [
+            {"area": "charge (app/billing.py)", "why_it_matters": "w", "what_changed": "c", "what_could_go_wrong": "g",
+             "priority": "Critical", "locations": ["app/billing.py:13"]},
+        ]
+    }
+    report = screen_review(raw, ground)
+    assert report.attention[0].priority == "Medium"  # no rule fact cited
 
 
 def test_failed_model_call_leaves_the_rule_review():
@@ -184,3 +241,15 @@ def test_attention_skips_private_dunder_yaml_and_readme():
     kept = finalize_review(report).attention
     assert [a.area for a in kept] == ["charge (app/billing.py)"]
     assert kept[0].involved == ["app/billing.py:10"]
+
+
+def test_model_reason_is_shown_only_when_it_agrees_and_is_grounded():
+    stored = _stored()
+    facts, ground = _ground(stored)
+    rules = build_review(stored=stored, repo="acme/shop", sha="b" * 40, patches={"app/billing.py": PATCH})
+    agrees = ReviewReport(overall_risk="Medium", risk_reason="Existing callers of charge get the new retries default.")
+    kept = assess_risk(merge_review(agrees, rules), facts, model=agrees, ground=ground)
+    assert kept.risk_reason.endswith("Existing callers of charge get the new retries default.")
+    invented = ReviewReport(overall_risk="Medium", risk_reason="It affects 40 merchants via paymentGateway.")
+    dropped = assess_risk(merge_review(invented, rules), facts, model=invented, ground=ground)
+    assert "merchants" not in dropped.risk_reason
