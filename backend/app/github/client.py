@@ -18,10 +18,14 @@ _MAX_REDIRECTS = 5
 
 
 class GitHubNotFound(RuntimeError):
+    """Raised when a GitHub API call returns 404."""
+
     pass
 
 
 class GitHubClient:
+    """Minimal GitHub REST client authenticated with an installation token: compare, tarball download, and pull request comments."""
+
     def __init__(self, *, token: str, api_url: str, http: httpx.Client | None = None) -> None:
         self._token = token
         self._api_url = api_url.rstrip("/")
@@ -29,10 +33,12 @@ class GitHubClient:
         self._owns_client = http is None
 
     def close(self) -> None:
+        """Close the HTTP client when this client created it."""
         if self._owns_client:
             self._http.close()
 
     def request(self, method: str, path: str, **kwargs):
+        """Send an authenticated API request and return the JSON body (None when empty); raises GitHubNotFound on 404."""
         headers = dict(kwargs.pop("headers", {}))
         headers["Authorization"] = f"Bearer {self._token}"
         headers["Accept"] = "application/vnd.github+json"
@@ -45,9 +51,11 @@ class GitHubClient:
         return response.json()
 
     def compare(self, full_name: str, base_sha: str, head_sha: str) -> dict:
+        """Return the compare payload (changed files and patches) between two commits."""
         return self.request("GET", f"/repos/{full_name}/compare/{base_sha}...{head_sha}")
 
     def download_tarball(self, full_name: str, sha: str) -> bytes:
+        """Download the repository tarball at a commit, dropping the auth header on cross-host redirects."""
         owner, repo = full_name.split("/", 1)
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -92,6 +100,7 @@ class GitHubClient:
         return response
 
     def list_comments(self, full_name: str, pr_number: int) -> list[dict]:
+        """Return the pull request's issue comments (id and body), up to 20 pages."""
         found: list[dict] = []
         page = 1
         while page <= 20:
@@ -110,6 +119,7 @@ class GitHubClient:
         return found
 
     def create_comment(self, full_name: str, pr_number: int, body: str) -> int:
+        """Post a comment on the pull request and return its id."""
         payload = self.request(
             "POST",
             f"/repos/{full_name}/issues/{pr_number}/comments",
@@ -118,6 +128,7 @@ class GitHubClient:
         return int(payload["id"])
 
     def update_comment(self, full_name: str, comment_id: int, body: str) -> None:
+        """Replace the body of an existing comment."""
         self.request(
             "PATCH",
             f"/repos/{full_name}/issues/comments/{comment_id}",
@@ -185,10 +196,13 @@ def snapshot_at_sha(
 
 
 class GithubSnapshotSource:
+    """Builds a Snapshot from GitHub: head-commit files from the tarball and the changes from the compare API."""
+
     def __init__(self, client: GitHubClient) -> None:
         self._client = client
 
     def fetch(self, full_name: str, base_sha: str, head_sha: str) -> Snapshot:
+        """Return the Snapshot for a repository between two commits."""
         blob = self._client.download_tarball(full_name, head_sha)
         files = files_from_tarball(blob)
         compare = self._client.compare(full_name, base_sha, head_sha)

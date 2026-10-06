@@ -8,6 +8,8 @@ from app.llm.provider import ExplainRequest, ExplanationCallError, LLMResult
 
 
 class OllamaProvider:
+    """LLM provider that calls a local Ollama server's chat API with the output JSON schema and temperature 0."""
+
     id = "ollama"
 
     def __init__(
@@ -24,6 +26,7 @@ class OllamaProvider:
         self._client = client
 
     def explain(self, request: ExplainRequest) -> LLMResult:
+        """Send the request to Ollama after checking the model is available, and return the reply text, model, and latency."""
         client = self._client or httpx.Client(timeout=self._timeout)
         close = self._client is None
         started = time.perf_counter()

@@ -182,21 +182,26 @@ def build_review_diagram(*, symbols, relationships, claims, evidences) -> str:
 
 
 class _Graph:
+    """Builds the Explain tab's change-impact Mermaid diagram: nodes with review markers, edges, and class styles."""
+
     def __init__(self) -> None:
         self.nodes: dict[str, tuple[str, str, str, str | None]] = {}
         self.edges: list[tuple[str, str, str, str]] = []
 
     def node(self, node_id: str, name: str, tag: str, kind: str, group: str | None = None) -> None:
+        """Add a node once, with its label and style class."""
         if node_id in self.nodes and self.nodes[node_id][2] in {"changed", "risk", "new", "removed", "error"}:
             return
         self.nodes[node_id] = (name, tag, kind, group)
 
     def edge(self, source: str, target: str, label: str, style: str) -> None:
+        """Add a labeled edge between two nodes."""
         key = (source, target, label, style)
         if key not in self.edges and source != target:
             self.edges.append(key)
 
     def render(self) -> str:
+        """Return the diagram as Mermaid text."""
         lines = ["flowchart LR"]
         grouped: dict[str | None, list[str]] = {}
         for node_id, (_name, _tag, _kind, group) in self.nodes.items():

@@ -8,6 +8,8 @@ from app.llm.provider import ExplainRequest, ExplanationCallError, LLMResult
 
 
 class ScriptedProvider:
+    """Deterministic provider for tests and the local seed: answers with a document built from the packet, or raises a set error."""
+
     id = "fake"
 
     def __init__(self, error: str | None = None) -> None:
@@ -16,6 +18,7 @@ class ScriptedProvider:
         self.requests: list[ExplainRequest] = []
 
     def explain(self, request: ExplainRequest) -> LLMResult:
+        """Record the request and return a document built from its packet, or raise the configured error."""
         self.calls += 1
         self.requests.append(request)
         if self.error:

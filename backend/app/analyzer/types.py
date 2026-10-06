@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class FileChange:
+    """One file in the compare diff: its path, status (added, modified, removed, renamed), and unified patch text."""
+
     path: str
     status: str
     patch: str | None = None
@@ -12,6 +14,8 @@ class FileChange:
 
 @dataclass
 class Snapshot:
+    """Everything the analyzer reads for one pull request revision: the head-commit file contents, the changed files with patches, and the pull request metadata."""
+
     repository: str
     base_sha: str
     head_sha: str
@@ -24,6 +28,8 @@ class Snapshot:
 
 @dataclass
 class Symbol:
+    """A function, class, or other definition found at the head commit, with its location, whether it is exported, and whether the diff changes it."""
+
     id: str
     name: str
     kind: str
@@ -36,6 +42,8 @@ class Symbol:
 
 @dataclass
 class Relationship:
+    """A resolved edge between two symbols (CALLS, IMPORTS, TESTS, and similar) with the evidence that shows it."""
+
     id: str
     type: str
     source_id: str | None
@@ -49,6 +57,8 @@ class Relationship:
 
 @dataclass
 class Evidence:
+    """A located piece of source that backs a claim or relationship: repository, commit, file, line range, and snippet."""
+
     id: str
     type: str
     repo: str
@@ -63,6 +73,8 @@ class Evidence:
 
 @dataclass
 class Claim:
+    """A statement the analyzer makes about the change, labeled FACT, INFERENCE, or UNKNOWN, with the evidence and supporting claims it rests on."""
+
     id: str
     epistemic: str
     kind: str
@@ -74,6 +86,8 @@ class Claim:
 
 @dataclass
 class AnalysisResult:
+    """The output of one analysis: symbols, relationships, evidence, claims, language coverage, and notes about what was analyzed."""
+
     language_coverage: str
     symbols: list[Symbol]
     relationships: list[Relationship]

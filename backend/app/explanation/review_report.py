@@ -181,6 +181,8 @@ def review_user_message(*, task: str, diff: str, behavior_facts, impact_facts, r
 
 
 class _Ground:
+    """What the model's review may refer to: the fact ids (behavior, impact, rule), the diff's files and line numbers, and the text of the diff and facts."""
+
     def __init__(self, *, diff: str, lines_by_file: dict[str, set[int]], behavior_facts, impact_facts, review_facts) -> None:
         self.ids: dict[str, str] = {}
         for fact in behavior_facts or []:
@@ -216,6 +218,7 @@ class _Ground:
         )
 
     def location(self, text: str) -> str | None:
+        """Return the location if it names a file in the diff or the facts and a line near a diff line, else None."""
         match = _LOCATION.match((text or "").strip().strip("`"))
         if not match:
             return None
@@ -231,6 +234,7 @@ class _Ground:
         return text.strip().strip("`")
 
     def unknown_code(self, text: str) -> str | None:
+        """Return the first code token in ``text`` that appears in neither the diff nor the facts, else None."""
         for token in _identifiers(text or ""):
             if _normalize(token) not in self.corpus:
                 return token

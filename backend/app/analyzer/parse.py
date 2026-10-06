@@ -49,6 +49,8 @@ CODE_SUFFIXES = tuple(_PARSERS)
 
 @dataclass
 class ImportBinding:
+    """A name a file imports: the local name, the name it refers to, the module it comes from, and the line of the import."""
+
     file_path: str
     local_name: str
     imported_name: str
@@ -58,6 +60,8 @@ class ImportBinding:
 
 @dataclass
 class CallSite:
+    """A call found while parsing a file: the called name, its line and column, and whether it is a member call such as ``obj.name()``."""
+
     file_path: str
     callee: str
     line: int
