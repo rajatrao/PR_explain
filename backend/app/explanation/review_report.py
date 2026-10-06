@@ -79,6 +79,8 @@ def build_review_facts(*, symbols, relationships, claims, evidences, repo, sha) 
         where = _claim_location(claim, evidence_by_id)
         if kind == "call_context" and "without" in text and subject in changed:
             found.append(("error_handling", text, where, "medium"))
+        elif kind == "dangling_call":
+            found.append(("dangling", text, where, "high"))
         elif kind == "stale_test":
             found.append(("stale_test", text, where, "medium"))
         elif kind == "config_undocumented":
@@ -340,6 +342,15 @@ def rule_review(
         if any(call["flags"].get("defaults") for call in mine):
             priority = _max(priority, "Medium")
             risks.append("Callers that rely on a changed default now get a different value.")
+        dangling = [
+            c for c in claims or [] if getattr(c, "kind", None) == "dangling_call" and getattr(c, "subject", None) == item["name"]
+        ]
+        if item.get("removed") and dangling:
+            priority = _max(priority, "High")
+            risks.append(
+                f"{len(dangling)} call{'s' if len(dangling) != 1 else ''} at the head commit still use it and no longer "
+                "resolve to a definition."
+            )
         if item.get("removed"):
             if item.get("exported"):
                 priority = _max(priority, "Medium")

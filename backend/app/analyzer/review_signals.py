@@ -31,6 +31,8 @@ def review_signals(
     snapshot,
     *,
     functions,
+    calls=(),
+    removed_names=frozenset(),
     resolved_calls,
     unresolved_sites,
     relationships,
@@ -45,6 +47,37 @@ def review_signals(
     _coverage(resolved_calls, unresolved_sites, change_lines, add_claim)
     _stale_tests(relationships, changed_ids, change_lines, by_id, add_claim, slug)
     _undocumented_config(snapshot, add_claim, add_evidence, slug)
+    _dangling_calls(snapshot, calls, removed_names, add_claim, add_evidence, slug)
+
+
+def _dangling_calls(snapshot, calls, removed_names, add_claim, add_evidence, slug) -> None:
+    """Head call sites that still call a function this pull request removed (by plain name; member
+    calls such as obj.name() are left out because their target cannot be known)."""
+    for site in calls or []:
+        if site.member or site.callee not in removed_names or is_test_path(site.file_path):
+            continue
+        lines = (snapshot.files.get(site.file_path) or "").splitlines()
+        text = lines[site.line - 1].strip() if 0 < site.line <= len(lines) else None
+        evidence = add_evidence(
+            id=f"ev_dangling_{slug(site.file_path)}_{slug(site.callee)}_{site.line}",
+            type="source_span",
+            repo=snapshot.repository,
+            commit_sha=snapshot.head_sha,
+            file=site.file_path,
+            start_line=site.line,
+            end_line=site.line,
+            symbol=site.callee,
+            description="dangling_call",
+            snippet=text,
+        )
+        add_claim(
+            id=f"cl_dangling_{slug(site.file_path)}_{slug(site.callee)}_{site.line}",
+            epistemic="FACT",
+            kind="dangling_call",
+            text=f"{site.file_path}:{site.line} still calls {site.callee}, which this pull request removes.",
+            subject=site.callee,
+            evidence_ids=[evidence.id],
+        )
 
 
 def _call_context(snapshot, resolved_calls, changed_ids, add_claim, add_evidence, slug) -> None:

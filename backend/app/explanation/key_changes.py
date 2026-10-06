@@ -21,6 +21,8 @@ import re
 from app.analyzer.behavior import CATEGORY_ORDER
 from app.explanation.behavior_comparison import build_behavior_comparison
 from app.explanation.behavior_facts import call_expression, param_delta
+from app.explanation.explain_view import explain_skip_symbol
+from app.analyzer.parse import is_test_path
 
 KEY_LIMIT = 6
 OUTSIDE_LIMIT = 12
@@ -66,6 +68,22 @@ class _Facts:
         }
         self.contexts = _contexts(claims, self.evidence_by_id)
         self.relationships = relationships or []
+        self.base_sha = _base_sha(evidences)
+        # Head call sites that still call a function this pull request removes.
+        self.dangling: dict[str, list[dict]] = {}
+        for claim in claims or []:
+            if getattr(claim, "kind", None) != "dangling_call":
+                continue
+            for evidence_id in getattr(claim, "evidence_public_ids", None) or getattr(claim, "evidence_ids", None) or []:
+                evidence = self.evidence_by_id.get(evidence_id)
+                if evidence is None:
+                    continue
+                self.dangling.setdefault(getattr(claim, "subject", "") or "", []).append(
+                    {
+                        "location": f"{evidence.file}:{evidence.start_line}",
+                        "href": _blob(repo, sha, evidence.file, evidence.start_line),
+                    }
+                )
 
     def calls_into(self, name: str) -> list[dict]:
         """Stored CALLS edges into ``name`` from files outside the diff, with the call as written."""
@@ -115,8 +133,12 @@ def build_key_rows(*, symbols, relationships, claims, evidences, repo, sha, fall
         covered.add(name)
         ranked.append((_rank(item, name in exported), _key_row(item, facts, row.get("href"))))
     for name, item in facts.items.items():
+        # Private helpers and dunder methods are left out of Key Changes, removed or not.
+        if explain_skip_symbol(name, item.get("file")) or is_test_path(item.get("file") or ""):
+            continue
         if item.get("removed") and name not in covered:
             covered.add(name)
+            item = {**item, "dangling": bool(facts.dangling.get(name))}
             ranked.append((_rank(item, True), _key_row(item, facts, item.get("href"))))
     ranked.sort(key=lambda pair: pair[0])
     rows = [row for _, row in ranked]
@@ -144,12 +166,47 @@ def _rank(item: dict, public: bool) -> tuple:
     best = min((CATEGORY_ORDER.get(c["category"], 9) for c in item["changes"]), default=9)
     if item.get("removed"):
         best = -1
+    if item.get("dangling"):
+        best = -2
     outside = item["reach"].get("outside_diff", 0) if item.get("reach") else 0
     return (best, not public, -outside, item["name"])
 
 
+def _removed_row(item: dict, facts: _Facts) -> dict:
+    """What a reviewer needs about a removed function: what it was, and whether anything still calls it."""
+    name = item["name"]
+    change = next((c for c in item["changes"] if c["category"] == "removed_function"), None)
+    header = (change or {}).get("before") or ""
+    line = None
+    if change and change.get("before_location") and ":" in change["before_location"]:
+        line = change["before_location"].rsplit(":", 1)[1]
+    parts = [f"Removed from {item.get('file')}" + (f" (base line {line})" if line else "") + "."]
+    if header:
+        parts.append(f"It was `{header.rstrip(' {:')}`.")
+    dangling = facts.dangling.get(name, [])
+    if dangling:
+        where = ", ".join(site["location"] for site in dangling[:3]) + (f" and {len(dangling) - 3} more" if len(dangling) > 3 else "")
+        parts.append(
+            f"Still called at the head commit in {where}; "
+            f"{'that call no longer resolves' if len(dangling) == 1 else 'those calls no longer resolve'} to a definition."
+        )
+    else:
+        parts.append("No plain call to it remains in the analyzed files at the head commit.")
+    href = None
+    if line and facts.repo and facts.base_sha:
+        href = _blob(facts.repo, facts.base_sha, item.get("file"), int(line))
+    return {
+        "label": f"{name} (removed)",
+        "value": " ".join(parts),
+        "href": dangling[0]["href"] if dangling else None,
+        "label_href": href,
+    }
+
+
 def _key_row(item: dict, facts: _Facts, href: str | None) -> dict:
     name = item["name"]
+    if item.get("removed"):
+        return _removed_row(item, facts)
     label = f"{name} (removed)" if item.get("removed") else f"{name} (new)" if _is_new(item) else name
     parts: list[str] = []
     categories = _ordered_categories(item)
@@ -403,6 +460,10 @@ def _join(items: list[str]) -> str:
     if len(items) <= 1:
         return "".join(items)
     return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _base_sha(evidences) -> str | None:
+    return next((e.commit_sha for e in evidences or [] if getattr(e, "type", None) == "behavior_before"), None)
 
 
 def _blob(repo, sha, path, line) -> str | None:
