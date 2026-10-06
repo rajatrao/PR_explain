@@ -7,6 +7,28 @@
  > **PR Explain is like `SQL EXPLAIN` for Pull Requests.**
 
  Instead of asking an AI model to blindly read a Pull Request and guess what happened, PR Explain first performs deterministic code analysis, builds a structured change graph, collects evidence, and determines potential impact. The AI model then turns those facts into a human-readable explanation.
+---
+
+## Snapshot
+1. List of Github PRs created
+   <img width="845" height="858" alt="Screenshot 2026-10-06 at 12 48 49 PM" src="https://github.com/user-attachments/assets/1d6e1391-2317-4b69-b7a9-55de83261d64" />
+
+2. PR explain view for quick look
+   <img width="1134" height="1016" alt="Screenshot 2026-10-06 at 12 46 35 PM" src="https://github.com/user-attachments/assets/c58de7e4-4702-4f2e-bb62-7d69928e726c" />
+   <img width="1111" height="783" alt="Screenshot 2026-10-06 at 12 51 09 PM" src="https://github.com/user-attachments/assets/11e4f75d-fd5d-4e54-a5de-713a96ca44a9" />
+   <img width="1134" height="761" alt="Screenshot 2026-10-06 at 12 51 40 PM" src="https://github.com/user-attachments/assets/b2060cef-06ba-4216-805b-2f4b5377997f" />
+
+3. PR details view
+  <img width="1121" height="898" alt="Screenshot 2026-10-06 at 12 52 35 PM" src="https://github.com/user-attachments/assets/8794228a-93ac-42a2-9185-0a8451c05534" />
+  <img width="1124" height="776" alt="Screenshot 2026-10-06 at 12 55 12 PM" src="https://github.com/user-attachments/assets/72d07c3c-dd84-48d1-9880-0173d2dcee10" />
+
+4. PR review support
+  <img width="1124" height="909" alt="Screenshot 2026-10-06 at 12 53 36 PM" src="https://github.com/user-attachments/assets/8dcf84e1-75c5-45dd-ae6a-0bf343a06f90" />
+  <img width="1101" height="734" alt="Screenshot 2026-10-06 at 12 54 03 PM" src="https://github.com/user-attachments/assets/ca88a1fa-9d47-4ccd-a3a2-237acb715f34" />
+
+  
+
+
 
 ---
 
