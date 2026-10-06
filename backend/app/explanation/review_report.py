@@ -610,18 +610,65 @@ def merge_review(model: ReviewReport | None, rules: ReviewReport) -> ReviewRepor
 # --- render -----------------------------------------------------------------------------------
 
 
+# --- what the Review tab shows -------------------------------------------------------------
+
+# Files a reviewer does not need called out as an attention area.
+_NOT_REVIEW_FILE = re.compile(r"(\.ya?ml$|(^|/)readme(\.[a-z]+)?$)", re.IGNORECASE)
+# Private (leading underscore, JS #name) and dunder names, as a whole word in code or prose.
+_PRIVATE_NAME = re.compile(r"(?<![\w.#])(?:_{1,2}[A-Za-z]\w*|#[A-Za-z]\w*)(?=\W|$)")
+
+
+def finalize_review(report: ReviewReport) -> ReviewReport:
+    """Keep only what the Review tab shows: attention areas, bugs, top questions, and the risk.
+
+    Attention areas about private methods, dunder methods such as __repr__, YAML files, or a
+    README are dropped, and such entries are removed from the files/functions an area lists.
+    """
+    out = report.model_copy(deep=True)
+    out.questions = []
+    out.missing_tests = []
+    out.safe = []
+    out.undetermined = []
+    kept = []
+    for area in out.attention:
+        if _private_or_ignored(area.area):
+            continue
+        involved = [entry for entry in area.involved if not _private_or_ignored(entry)]
+        if area.involved and not involved:
+            continue
+        area.involved = involved
+        area.locations = [loc for loc in area.locations if not _private_or_ignored(loc)]
+        kept.append(area)
+    out.attention = kept
+    return out
+
+
+def _private_or_ignored(text: str) -> bool:
+    text = text or ""
+    for token in re.findall(r"[\w./-]+\.(?:ya?ml|md|rst|txt)\b|[\w./-]*readme[\w.]*", text, re.IGNORECASE):
+        path = token.split(":", 1)[0]
+        if _NOT_REVIEW_FILE.search(path):
+            return True
+    head = re.split(r"[\s(:]", text.strip(), maxsplit=1)[0]
+    if _NOT_REVIEW_FILE.search(head.split(":", 1)[0]):
+        return True
+    return bool(_PRIVATE_NAME.search(text.split(" (", 1)[0]))
+
+
 NONE_FOUND = "None found in the diff and stored facts."
 
 
 def render_review_markdown(report: ReviewReport | dict | None, *, repo: str | None = None, sha: str | None = None) -> str:
-    """Sections in the reviewer's order: attention, questions, bugs, missing tests, safe areas,
-    top questions, then the overall risk. Empty sections say so rather than disappearing."""
+    """Sections in the reviewer's order: attention areas, potential bugs, top questions, then the
+    overall risk. Empty sections say so rather than disappearing."""
     if report is None:
         return ""
     if isinstance(report, dict):
         report = ReviewReport.model_validate(report)
     link = lambda loc: _link(loc, repo, sha)  # noqa: E731
     out: list[str] = []
+
+    report = finalize_review(report)
 
     out.append("### 1. Reviewer attention areas")
     for area in report.attention:
@@ -635,16 +682,7 @@ def render_review_markdown(report: ReviewReport | dict | None, *, repo: str | No
     if not report.attention:
         out.extend([NONE_FOUND, ""])
 
-    out.append("### 2. Reviewer questions")
-    tops = {q.question for q in report.top_questions}
-    extra = [q for q in report.questions if q.question not in tops]
-    if extra:
-        out.extend(f"- {q.question}" for q in extra)
-    else:
-        out.append("All questions are ranked in the top questions below." if report.top_questions else NONE_FOUND)
-    out.append("")
-
-    out.append("### 3. Potential bugs and regressions")
+    out.append("### 2. Potential bugs and regressions")
     for bug in report.bugs:
         out.append(f"**{bug.finding}** _(confidence {bug.confidence}, {bug.status})_")
         out.append(f"- **Evidence:** {bug.evidence}" + (" — " + ", ".join(link(l) for l in bug.locations) if bug.locations else ""))
@@ -654,24 +692,7 @@ def render_review_markdown(report: ReviewReport | dict | None, *, repo: str | No
     if not report.bugs:
         out.extend([NONE_FOUND, ""])
 
-    out.append("### 4. Missing test scenarios")
-    groups: dict[str, list[MissingTest]] = {}
-    for test in report.missing_tests:
-        groups.setdefault(test.group, []).append(test)
-    for group, tests in groups.items():
-        out.append(f"**{group}**")
-        out.extend(f"- {t.scenario} — {t.verifies}" for t in tests)
-        out.append("")
-    if not groups:
-        out.extend([NONE_FOUND, ""])
-
-    out.append("### 5. Things that look safe")
-    out.extend(f"- **{s.area}** — {s.why}" for s in report.safe)
-    if not report.safe:
-        out.append(NONE_FOUND)
-    out.append("")
-
-    out.append("### 6. Top review questions")
+    out.append("### 3. Top review questions")
     for index, q in enumerate(report.top_questions, start=1):
         out.append(f"{index}. **{q.question}**")
         out.append(f"   - Why ask this: {q.why_ask}")
@@ -680,11 +701,6 @@ def render_review_markdown(report: ReviewReport | dict | None, *, repo: str | No
     if not report.top_questions:
         out.append(NONE_FOUND)
     out.append("")
-
-    if report.undetermined:
-        out.append("**Could not determine**")
-        out.extend(f"- {text}" for text in report.undetermined)
-        out.append("")
 
     out.append(f"### Overall review risk: {report.overall_risk}")
     out.append(report.risk_reason)
@@ -813,7 +829,7 @@ def build_review(
         diff_available=bool(diff),
     )
     if ask_model is None:
-        return rules
+        return finalize_review(rules)
     user = review_user_message(
         task="Write the review described in the system message.",
         diff=diff,
@@ -827,9 +843,9 @@ def build_review(
         raw = json.loads(content or "")
     except Exception as exc:  # the review is optional; the rules stand on their own
         log.append(f"review call failed: {type(exc).__name__}")
-        return rules
+        return finalize_review(rules)
     ground = make_ground(
         diff=diff, lines_by_file=lines_by_file, behavior_facts=behavior_facts, impact_facts=impact_facts, review_facts=review_facts
     )
     model = screen_review(raw, ground, log)
-    return merge_review(model, rules)
+    return finalize_review(merge_review(model, rules))

@@ -198,7 +198,6 @@ export type ReviewReport = {
     involved: string[];
     priority: ReviewPriority;
   })[];
-  questions: (Grounded & { question: string })[];
   bugs: (Grounded & {
     finding: string;
     evidence: string;
@@ -207,10 +206,7 @@ export type ReviewReport = {
     confidence: "High" | "Medium" | "Low";
     status: "confirmed" | "possible";
   })[];
-  missing_tests: (Grounded & { group: string; scenario: string; verifies: string })[];
-  safe: (Grounded & { area: string; why: string })[];
   top_questions: (Grounded & { question: string; why_ask: string; relevant_code: string })[];
-  undetermined: string[];
   overall_risk: ReviewPriority;
   risk_reason: string;
 };

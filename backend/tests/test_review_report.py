@@ -117,10 +117,12 @@ def test_failed_model_call_leaves_the_rule_review():
     assert report.attention and report.attention[0].source == "rules"
     markdown = render_review_markdown(report, repo="acme/shop", sha="b" * 40)
     assert markdown.startswith("### 1. Reviewer attention areas")
-    titles = ["### 1.", "### 2.", "### 3.", "### 4.", "### 5.", "### 6.", "### Overall review risk: Medium"]
+    titles = ["### 1. Reviewer attention areas", "### 2. Potential bugs", "### 3. Top review questions", "### Overall review risk: Medium"]
     assert [markdown.index(t) for t in titles] == sorted(markdown.index(t) for t in titles)
     assert "Is the new default of retries (3 → 5) intended for nightly_job in app/jobs.py:3?" in markdown
-    assert "The diff text was not available" in markdown
+    for removed in ("Reviewer questions", "Missing test scenarios", "Things that look safe", "Could not determine"):
+        assert removed not in markdown
+    assert not report.questions and not report.missing_tests and not report.safe and not report.undetermined
 
 
 def test_missing_required_argument_is_a_confirmed_bug():
@@ -159,3 +161,26 @@ def test_missing_required_argument_is_a_confirmed_bug():
     assert report.attention[0].priority == "High"
     assert report.overall_risk == "High"
     assert report.top_questions[0].question.startswith("nightly_job calls `charge(order)` without currency")
+
+
+def test_attention_skips_private_dunder_yaml_and_readme():
+    from app.explanation.review_report import finalize_review
+    from app.explanation.schema import AttentionArea
+
+    def area(name, involved):
+        return AttentionArea(
+            area=name, why_it_matters="w", what_changed="c", what_could_go_wrong="g", involved=involved, priority="High", fact_ids=["r1"]
+        )
+
+    report = ReviewReport(
+        attention=[
+            area("_load_settings (app/config.py)", ["app/config.py:3"]),
+            area("__repr__ (app/models.py)", ["app/models.py:9"]),
+            area("Deploy config in deploy.yaml", ["deploy.yaml:2"]),
+            area("Setup steps", ["README.md:10"]),
+            area("charge (app/billing.py)", ["app/billing.py:10", "_round_total", "README.md"]),
+        ]
+    )
+    kept = finalize_review(report).attention
+    assert [a.area for a in kept] == ["charge (app/billing.py)"]
+    assert kept[0].involved == ["app/billing.py:10"]
