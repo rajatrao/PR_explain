@@ -7,6 +7,7 @@ import type {
   FileChange,
   RunDetail,
   BehavioralChanges,
+  EvidenceLink,
   ImpactSummary,
 } from "./types";
 
@@ -518,6 +519,7 @@ function ImpactSection({ section }: { section?: ImpactSummary }) {
               <span className="detail-label">Who notices</span> <InlineCode text={area.who_notices} />
             </p>
           ) : null}
+          <EvidenceLinks items={area.evidence} />
         </div>
       ))}
       {areas.length ? (
@@ -600,6 +602,7 @@ function BehavioralChangesSection({ section }: { section?: BehavioralChanges }) 
               <span className="detail-label">Who notices</span> <InlineCode text={change.impact} />
             </p>
           ) : null}
+          <EvidenceLinks items={change.evidence} />
         </div>
       ))}
       {section.watch?.length ? (
@@ -834,6 +837,26 @@ function ReviewView({ run }: { run: RunDetail }) {
         <p>{report.risk_reason}</p>
       </section>
     </div>
+  );
+}
+
+function EvidenceLinks({ items }: { items?: EvidenceLink[] }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <p className="behavior-evidence kicker">
+      <span className="detail-label">Evidence</span>{" "}
+      {joinNodes(
+        items.map((item) =>
+          item.href ? (
+            <a key={item.label} href={item.href} target="_blank" rel="noreferrer">
+              <code>{item.label}</code>
+            </a>
+          ) : (
+            <code key={item.label}>{item.label}</code>
+          ),
+        ),
+      )}
+    </p>
   );
 }
 

@@ -25,9 +25,17 @@ CHAR_BUDGET = 14000
 TEXT_CAP = 160
 
 
-def build_behavior_facts(*, symbols, relationships, claims, evidences) -> list[BehaviorFunctionFact]:
+def build_behavior_facts(
+    *, symbols, relationships, claims, evidences, repo=None, base_sha=None, head_sha=None
+) -> list[BehaviorFunctionFact]:
     comparison = build_behavior_comparison(
-        symbols=symbols, relationships=relationships, claims=claims, evidences=evidences
+        symbols=symbols,
+        relationships=relationships,
+        claims=claims,
+        evidences=evidences,
+        repo=repo,
+        base_sha=base_sha,
+        head_sha=head_sha,
     )
     evidence_by_id = {_id(item): item for item in evidences or []}
     sites = _call_sites(relationships, evidence_by_id)
@@ -55,6 +63,8 @@ def build_behavior_facts(*, symbols, relationships, claims, evidences) -> list[B
                     after=_cap(change.get("after")),
                     before_when=_cap(change.get("before_when")),
                     after_when=_cap(change.get("after_when")),
+                    location=change.get("after_location") or change.get("before_location"),
+                    href=change.get("after_href") or change.get("before_href"),
                 )
             )
         if not changes:

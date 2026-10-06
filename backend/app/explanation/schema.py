@@ -117,6 +117,9 @@ class BehaviorChangeFact(BaseModel):
     after: str | None = None
     before_when: str | None = None
     after_when: str | None = None
+    # Where the change is in the diff, for evidence links. Not sent to the model.
+    location: str | None = Field(default=None, exclude=True)
+    href: str | None = Field(default=None, exclude=True)
 
 
 class BehaviorFunctionFact(BaseModel):

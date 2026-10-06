@@ -35,7 +35,7 @@ import re
 from app.analyzer.behavior import error_target
 from app.analyzer.parse import is_test_path
 from app.explanation.behavior_facts import param_delta
-from app.explanation.behavioral_changes import Grounding
+from app.explanation.behavioral_changes import Grounding, _evidence_markdown, evidence_links
 from app.explanation.schema import BehaviorFunctionFact, ImpactAreaNote, ImpactFact, ImpactNarrative
 
 ATTENTION_CAP = 3
@@ -373,6 +373,8 @@ def screen_impact(
                 issue = problem(text, allowed)
                 if issue:
                     break
+        if issue is None and grounding.off_topic([note.title, note.summary], allowed):
+            issue = "shares no subject with the facts it cites"
         if issue:
             log.append(f"dropped '{note.title[:40]}': {issue}")
             continue
@@ -403,10 +405,9 @@ def build_impact_section(
     prescreened: bool = False,
     reasons: list[str] | None = None,
 ) -> dict:
-    if prescreened and narrative:
-        chosen = narrative if isinstance(narrative, ImpactNarrative) else _parse(narrative)
-    else:
-        chosen = screen_impact(narrative, behavior_facts, impact_facts) if narrative else None
+    # Screened again against the facts rebuilt from the stored analysis, as Behavioral Changes is.
+    del prescreened
+    chosen = screen_impact(narrative, behavior_facts, impact_facts, reasons) if narrative else None
     if chosen is None or not chosen.areas:
         overview = NO_FACTS
         if impact_facts:
@@ -417,7 +418,13 @@ def build_impact_section(
         "source": "model",
         "overview": chosen.overview,
         "areas": [
-            {"title": note.title, "severity": note.severity, "summary": note.summary, "who_notices": note.who_notices}
+            {
+                "title": note.title,
+                "severity": note.severity,
+                "summary": note.summary,
+                "who_notices": note.who_notices,
+                "evidence": evidence_links(note.fact_ids, behavior_facts, impact_facts),
+            }
             for note in chosen.areas
         ],
     }
@@ -436,6 +443,8 @@ def render_impact_markdown(section: dict) -> str:
         lines.append(f"- {area['summary']}")
         if area.get("who_notices"):
             lines.append(f"- **Who notices:** {area['who_notices']}")
+        if area.get("evidence"):
+            lines.append("- **Evidence:** " + ", ".join(_evidence_markdown(item) for item in area["evidence"]))
         lines.append("")
     lines.append("_Written by the configured model from rule-derived impact findings; each item was checked against the facts it cites._")
     return "\n".join(lines).strip()

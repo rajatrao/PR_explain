@@ -167,7 +167,7 @@ export type BehavioralChanges = {
   source: "model" | "none";
   fact_count: number;
   overview: string;
-  changes: { title: string; before: string; after: string; impact: string }[];
+  changes: { title: string; before: string; after: string; impact: string; evidence?: EvidenceLink[] }[];
   watch: string[];
 };
 
@@ -180,7 +180,13 @@ export type BehaviorFlows = {
 export type ImpactSummary = {
   source: "model" | "none";
   overview: string;
-  areas: { title: string; severity: "high" | "medium" | "low"; summary: string; who_notices: string }[];
+  areas: {
+    title: string;
+    severity: "high" | "medium" | "low";
+    summary: string;
+    who_notices: string;
+    evidence?: EvidenceLink[];
+  }[];
 };
 
 
@@ -210,3 +216,5 @@ export type ReviewReport = {
   overall_risk: ReviewPriority;
   risk_reason: string;
 };
+
+export type EvidenceLink = { label: string; href?: string | null };

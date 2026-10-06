@@ -494,3 +494,6 @@ details.delta > summary { font-size: 22px; font-weight: 650; margin: 0 0 8px; }
 .priority-low, .risk-low .risk-badge { background: #d1fae5; color: #065f46; }
 .review-panel.risk p { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 16px; }
 .review-questions.ranked li .kicker { margin-top: 2px; }
+
+.behavior-evidence { margin: 4px 0 0; font-size: 13px; }
+.behavior-evidence a + a, .behavior-evidence code + code { margin-left: 2px; }
