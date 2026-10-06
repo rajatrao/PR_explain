@@ -87,11 +87,12 @@ def test_grounded_model_narrative_is_kept():
         "Audit trail for charges",
     ]
     assert screened.watch[0].text.startswith("Do callers")
+    # Even a narrative that passes screening is not shown: the section is written by rule only.
     section = build_behavioral_section(narrative=_good_narrative(), facts=_facts())
-    assert section["source"] == "model"
+    assert section["source"] == "rules"
     markdown = render_behavioral_changes_markdown(section)
-    assert "**Before:** Previously, an order with total <= 0 was rejected with ValueError." in markdown
-    assert "Written by the configured model from 4 before-and-after facts" in markdown
+    assert "Empty and negative orders at checkout" not in markdown
+    assert "Written by the configured model" not in markdown
 
 
 def test_narrative_items_that_go_beyond_their_facts_are_dropped():

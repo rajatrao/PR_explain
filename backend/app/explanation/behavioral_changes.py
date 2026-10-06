@@ -138,7 +138,11 @@ def build_behavioral_section(
     del prescreened
     from app.explanation.plain_summary import behavior_overview
 
-    chosen = screen_narrative(narrative, facts, reasons) if narrative else None
+    # Nothing written by the model is shown here. A model can describe things the diff does not
+    # contain (an "order confirmation" in a PR with no orders), and screening words cannot rule that
+    # out, so the section is written by rule from the PR's facts only.
+    del narrative, reasons
+    chosen = None
     fact_count = sum(len(fact.changes) for fact in facts)
     # The overall summary is written by rule from the PR's facts, so it cannot claim anything the diff
     # does not show; the items below it are the model's (when they pass the checks) or the rule's.
