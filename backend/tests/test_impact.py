@@ -240,12 +240,16 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
         assert name not in markdown
 
 
-def test_missing_impact_summary_shows_a_short_notice():
+def test_missing_impact_summary_falls_back_to_the_rule_findings():
     facts = _summary_facts()
-    section = build_impact_section(narrative=None, behavior_facts=[], impact_facts=facts, reasons=["the model returned no impact"])
-    assert section["source"] == "none"
-    assert section["overview"] == NO_SUMMARY
-    assert render_impact_markdown(section) == "### Impact\n\n" + NO_SUMMARY
+    section = build_impact_section(narrative=None, behavior_facts=[_charge(), _session()], impact_facts=facts)
+    assert section["source"] == "rules"
+    attention = [f for f in facts if f.kind == "attention"]
+    assert [area["severity"] for area in section["areas"][: len(attention)]] == [f.severity for f in attention]
+    assert section["areas"][0]["title"] == attention[0].text.split(". ", 1)[0].rstrip(".")
+    markdown = render_impact_markdown(section)
+    assert "Written by the configured model" not in markdown
+    assert build_impact_section(narrative=None, behavior_facts=[], impact_facts=[])["source"] == "none"
 
 
 
@@ -255,7 +259,7 @@ def test_impact_area_about_something_the_facts_never_mention_is_dropped():
     narrative = {
         "overview": "",
         "areas": [
-            {"title": "Billing database", "severity": "low", "summary": "Invoices are stored in a new ledger table.", "fact_ids": cited}
+            {"title": "Partner webhooks", "severity": "low", "summary": "Partners now receive a webhook for each invoice.", "fact_ids": cited}
         ],
     }
     reasons: list[str] = []

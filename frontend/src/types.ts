@@ -163,7 +163,7 @@ export type RunDetail = {
 };
 
 export type BehavioralChanges = {
-  source: "model" | "none";
+  source: "model" | "rules" | "none";
   fact_count: number;
   overview: string;
   changes: { title: string; before: string; after: string; impact: string; evidence?: EvidenceLink[] }[];
@@ -172,7 +172,7 @@ export type BehavioralChanges = {
 
 
 export type ImpactSummary = {
-  source: "model" | "none";
+  source: "model" | "rules" | "none";
   overview: string;
   areas: {
     title: string;

@@ -663,5 +663,6 @@ def test_missing_narrative_shows_a_short_notice_and_logs_the_reason(db):
     process_available_job(db, settings, snapshot_source=source, provider=provider, comment_client=MemoryComments())
     body = TestClient(app).get(f"/api/runs/{run.id}").json()
     section = body["behavioral_changes"]
-    assert section["source"] == "none"
-    assert section["overview"] == NO_NARRATIVE
+    # No narrative from the model: the section shows the before/after facts read from the diff.
+    assert section["source"] == "rules"
+    assert section["changes"] and section["changes"][0]["title"].startswith("`createSession`")

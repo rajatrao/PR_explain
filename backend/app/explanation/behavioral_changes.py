@@ -138,14 +138,21 @@ def build_behavioral_section(
     chosen = screen_narrative(narrative, facts, reasons) if narrative else None
     fact_count = sum(len(fact.changes) for fact in facts)
     if chosen is None or not chosen.changes:
-        overview = NO_FACTS
-        if fact_count:
-            # Why it was dropped is in the run's event log; it is not reviewer content.
-            overview = NO_NARRATIVE
+        rule_changes = _rule_changes(facts)
+        if rule_changes:
+            # No model summary passed the checks: show the before/after facts themselves, which are
+            # read straight from the diff.
+            return {
+                "source": "rules",
+                "fact_count": fact_count,
+                "overview": RULES_NOTE,
+                "changes": rule_changes,
+                "watch": [],
+            }
         return {
             "source": "none",
             "fact_count": fact_count,
-            "overview": overview,
+            "overview": NO_FACTS,
             "changes": [],
             "watch": [],
         }
@@ -189,10 +196,11 @@ def render_behavioral_changes_markdown(section: dict) -> str:
         lines.append("**Worth checking**")
         lines.extend(f"- {item}" for item in watch)
         lines.append("")
-    lines.append(
-        f"_Written by the configured model from {section.get('fact_count', 0)} before-and-after facts in the diff; "
-        "each item was checked against the facts it cites._"
-    )
+    if section.get("source") == "model":
+        lines.append(
+            f"_Written by the configured model from {section.get('fact_count', 0)} before-and-after facts in the diff; "
+            "each item was checked against the facts it cites._"
+        )
     return "\n".join(lines).strip()
 
 
@@ -217,6 +225,46 @@ def evidence_links(fact_ids: list[str], facts: list[BehaviorFunctionFact], impac
 def _evidence_markdown(item: dict) -> str:
     label = f"`{item['label']}`"
     return f"[{label}]({item['href']})" if item.get("href") else label
+
+
+RULES_NOTE = "Read directly from the diff: the model's summary did not pass the evidence checks for this commit."
+RULE_CHANGE_CAP = 5
+
+
+def _rule_changes(facts: list[BehaviorFunctionFact]) -> list[dict]:
+    """One item per changed public function: its most caller-visible before/after pair from the diff."""
+    from app.analyzer.behavior import CATEGORY_LABEL, CATEGORY_ORDER
+
+    out: list[dict] = []
+    for fact in sorted(facts, key=lambda f: (not f.public, f.removed)):
+        if not fact.public or not fact.changes:
+            continue
+        change = min(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9))
+        others = sorted({CATEGORY_LABEL.get(c.kind, "Logic").lower() for c in fact.changes if c is not change})
+        title = f"`{fact.function}` — {CATEGORY_LABEL.get(change.kind, 'Logic').lower()}"
+        if others:
+            title += f" (also {', '.join(others)})"
+        out.append(
+            {
+                "title": title,
+                "before": _code_side(change.before, change.before_when, "not present at the base commit"),
+                "after": _code_side(change.after, change.after_when, "removed at the head commit"),
+                "impact": ("Reached from " + ", ".join(f"`{name}`" for name in fact.reached_from[:4]) + ".")
+                if fact.reached_from
+                else "",
+                "evidence": evidence_links([c.id for c in fact.changes], facts),
+            }
+        )
+        if len(out) >= RULE_CHANGE_CAP:
+            break
+    return out
+
+
+def _code_side(code: str | None, when: str | None, missing: str) -> str:
+    if not code:
+        return missing[0].upper() + missing[1:] + "."
+    text = f"``{code}``" if "`" in code else f"`{code}`"
+    return text + (f" when `{when}`" if when else "")
 
 
 # --- screening ----------------------------------------------------------------------------
@@ -255,6 +303,15 @@ def screen_narrative(
         if allowed is None:
             log.append(f"dropped '{change.title[:40]}': cites no known fact")
             continue
+        change = change.model_copy(
+            update={
+                field: grounding.strip_judgments(getattr(change, field), change.fact_ids)
+                for field in ("title", "before", "after", "impact")
+            }
+        )
+        if not (change.title and change.before and change.after):
+            log.append(f"dropped an item: only judged the change")
+            continue
         entries = grounding.entries_for(change.fact_ids)
         issue = None
         for text, entries_ok in ((change.title, False), (change.before, False), (change.after, False), (change.impact or "", True)):
@@ -292,10 +349,10 @@ def screen_narrative(
         if len(watch) >= WATCH_CAP:
             break
 
-    overview = narrative.overview.strip()
+    kept_ids = [fact_id for change in kept for fact_id in change.fact_ids]
+    overview = grounding.strip_judgments(narrative.overview.strip(), kept_ids)
     everything = scope(list(by_change)) or ""
     # The overview may only summarize the kept changes: it is checked against their facts alone.
-    kept_ids = [fact_id for change in kept for fact_id in change.fact_ids]
     if overview and (
         problem(overview, everything, may_name_entries=True)
         or grounding.off_topic([overview], kept_ids)
@@ -345,13 +402,30 @@ class Grounding:
                 chunks.extend(self._behavior_chunks(behavior_id))
         return "\n".join(chunk for chunk in chunks if chunk)
 
-    def unsupported_claim(self, text: str, ids: list[str]) -> str | None:
-        """A system area or a quality judgment the cited facts do not show."""
+    def all_ids(self) -> list[str]:
+        return [*self.by_change, *self.by_impact]
+
+    def strip_judgments(self, text: str, ids: list[str]) -> str:
+        """Drop the sentences that judge the change (safer, improves, ensures, …) when no cited fact uses
+        that word. The rest of the item stays."""
         topic = self.topic_text(ids).casefold()
+        kept = []
+        for sentence in re.split(r"(?<=[.!?])\s+", (text or "").strip()):
+            judged = _JUDGMENT.search(sentence)
+            if judged and judged.group(0).casefold() not in topic:
+                continue
+            kept.append(sentence)
+        return " ".join(kept).strip()
+
+    def unsupported_claim(self, text: str, ids: list[str]) -> str | None:
+        """A system area no fact of this pull request is about, or a judgment the cited facts do not show."""
+        topic = self.topic_text(ids).casefold()
+        everything = self.topic_text(self.all_ids()).casefold()
         lowered = (text or "").casefold()
         judged = _JUDGMENT.search(text or "")
         if judged and judged.group(0).casefold() not in topic:
             return f'judged the change ("{judged.group(0)}"), which the facts cannot show'
+        topic = everything
         for area, stems in _DOMAIN.items():
             said = next((stem for stem in stems if re.search(rf"\b{stem}", lowered)), None)
             if said and not any(re.search(stem.replace(r"\b", ""), topic) for stem in stems):
@@ -362,11 +436,14 @@ class Grounding:
         """True when none of the item's content words matches anything the cited facts are about.
 
         Words match when one is a prefix of the other ("sess" and "session", "expir" and "expiry")."""
-        facts = _content_words(self.topic_text(ids))
         said = set().union(*(_content_words(text) for text in texts if text)) if texts else set()
-        if not said or not facts:
+        if not said:
             return False
-        return not any(a.startswith(b) or b.startswith(a) for a in said for b in facts)
+        for scope_ids in (ids, self.all_ids()):
+            facts = _content_words(self.topic_text(scope_ids))
+            if any(a.startswith(b) or b.startswith(a) for a in said for b in facts):
+                return False
+        return True
 
     def known(self, ids: list[str]) -> list[str]:
         return [item for item in ids if item in self.by_change or item in self.by_impact]
