@@ -448,38 +448,13 @@ def build_impact_section(
     }
 
 
-RULES_NOTE = "From the analyzer's findings: the model's summary did not pass the evidence checks for this commit."
+RULES_NOTE = "Summarized from the analyzer's findings on this pull request."
 
 
 def _rule_areas(impact_facts: list[ImpactFact], behavior_facts: list[BehaviorFunctionFact]) -> list[dict]:
-    """The rule findings that need attention, then one area for the workflows that reach the change."""
-    out: list[dict] = []
-    for fact in impact_facts:
-        if fact.kind != "attention":
-            continue
-        title, _, rest = fact.text.partition(". ")
-        out.append(
-            {
-                "title": title.rstrip("."),
-                "severity": fact.severity or "low",
-                "summary": rest.strip() or title,
-                "who_notices": "",
-                "evidence": evidence_links([fact.id], behavior_facts, impact_facts),
-            }
-        )
-    dependents = [fact for fact in impact_facts if fact.kind == "dependents"]
-    if dependents:
-        entries = [fact.text.split(" reaches ", 1)[0] for fact in dependents]
-        out.append(
-            {
-                "title": f"{len(entries)} entry point{'s' if len(entries) != 1 else ''} reach the changed code",
-                "severity": "low",
-                "summary": " ".join(fact.text for fact in dependents[:5]),
-                "who_notices": ", ".join(entries[:8]),
-                "evidence": evidence_links([fact.id for fact in dependents], behavior_facts, impact_facts),
-            }
-        )
-    return out[:AREA_CAP]
+    from app.explanation.plain_summary import rule_impact_areas
+
+    return rule_impact_areas(behavior_facts, impact_facts, lambda ids: evidence_links(ids, behavior_facts, impact_facts))
 
 
 def render_impact_markdown(section: dict) -> str:

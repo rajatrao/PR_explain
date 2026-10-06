@@ -240,17 +240,17 @@ def test_model_impact_summary_is_screened_like_behavioral_changes():
         assert name not in markdown
 
 
-def test_missing_impact_summary_falls_back_to_the_rule_findings():
+def test_missing_impact_summary_falls_back_to_a_plain_summary():
     facts = _summary_facts()
     section = build_impact_section(narrative=None, behavior_facts=[_charge(), _session()], impact_facts=facts)
     assert section["source"] == "rules"
-    attention = [f for f in facts if f.kind == "attention"]
-    assert [area["severity"] for area in section["areas"][: len(attention)]] == [f.severity for f in attention]
-    assert section["areas"][0]["title"] == attention[0].text.split(". ", 1)[0].rstrip(".")
-    markdown = render_impact_markdown(section)
-    assert "Written by the configured model" not in markdown
+    titles = [area["title"] for area in section["areas"]]
+    assert set(titles) == {"Charge", "Create session"}
+    # Severity comes from the analyzer's own findings, highest first.
+    assert section["areas"][0]["severity"] == "high"
+    markdown = render_impact_markdown(section).split("**Evidence:**")[0]
+    assert "`" not in markdown and "createSession" not in markdown and "post_checkout" not in markdown
     assert build_impact_section(narrative=None, behavior_facts=[], impact_facts=[])["source"] == "none"
-
 
 
 def test_impact_area_about_something_the_facts_never_mention_is_dropped():

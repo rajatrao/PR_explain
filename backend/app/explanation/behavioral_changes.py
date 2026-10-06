@@ -227,44 +227,13 @@ def _evidence_markdown(item: dict) -> str:
     return f"[{label}]({item['href']})" if item.get("href") else label
 
 
-RULES_NOTE = "Read directly from the diff: the model's summary did not pass the evidence checks for this commit."
-RULE_CHANGE_CAP = 5
+RULES_NOTE = "Summarized from the changes in the diff."
 
 
 def _rule_changes(facts: list[BehaviorFunctionFact]) -> list[dict]:
-    """One item per changed public function: its most caller-visible before/after pair from the diff."""
-    from app.analyzer.behavior import CATEGORY_LABEL, CATEGORY_ORDER
+    from app.explanation.plain_summary import rule_behavior_items
 
-    out: list[dict] = []
-    for fact in sorted(facts, key=lambda f: (not f.public, f.removed)):
-        if not fact.public or not fact.changes:
-            continue
-        change = min(fact.changes, key=lambda c: CATEGORY_ORDER.get(c.kind, 9))
-        others = sorted({CATEGORY_LABEL.get(c.kind, "Logic").lower() for c in fact.changes if c is not change})
-        title = f"`{fact.function}` — {CATEGORY_LABEL.get(change.kind, 'Logic').lower()}"
-        if others:
-            title += f" (also {', '.join(others)})"
-        out.append(
-            {
-                "title": title,
-                "before": _code_side(change.before, change.before_when, "not present at the base commit"),
-                "after": _code_side(change.after, change.after_when, "removed at the head commit"),
-                "impact": ("Reached from " + ", ".join(f"`{name}`" for name in fact.reached_from[:4]) + ".")
-                if fact.reached_from
-                else "",
-                "evidence": evidence_links([c.id for c in fact.changes], facts),
-            }
-        )
-        if len(out) >= RULE_CHANGE_CAP:
-            break
-    return out
-
-
-def _code_side(code: str | None, when: str | None, missing: str) -> str:
-    if not code:
-        return missing[0].upper() + missing[1:] + "."
-    text = f"``{code}``" if "`" in code else f"`{code}`"
-    return text + (f" when `{when}`" if when else "")
+    return rule_behavior_items(facts, lambda ids: evidence_links(ids, facts))
 
 
 # --- screening ----------------------------------------------------------------------------

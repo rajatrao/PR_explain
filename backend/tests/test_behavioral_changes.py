@@ -185,7 +185,7 @@ def test_entry_points_may_be_named_only_in_impact():
     assert screen_narrative(bad, _facts()) is None
 
 
-def test_no_usable_narrative_falls_back_to_the_facts_from_the_diff():
+def test_no_usable_narrative_falls_back_to_a_plain_summary_of_the_facts():
     narrative = BehavioralNarrative(
         changes=[{"title": "X", "before": "Previously, `made_up`.", "after": "Now `other`.", "fact_ids": ["b1"]}]
     )
@@ -193,16 +193,18 @@ def test_no_usable_narrative_falls_back_to_the_facts_from_the_diff():
     facts[0].changes[0].location = "app/billing.py:13"
     section = build_behavioral_section(narrative=narrative, facts=facts)
     assert section["source"] == "rules"
-    # Public functions only, each with its most caller-visible before/after pair, read from the diff.
-    assert [c["title"] for c in section["changes"]] == ["`charge` — errors (also calls, returns)"]
+    # Public functions only, in plain words: no code, conditions, files, or call syntax.
+    assert [c["title"] for c in section["changes"]] == ["Charge"]
     change = section["changes"][0]
-    assert change["before"] == '`raise ValueError("empty order")` when `total <= 0`'
-    assert change["after"] == '`raise InvalidOrder("negative total")` when `total < 0`'
-    assert change["impact"] == "Reached from `post_checkout`."
+    assert change["before"] == "In one case it failed with one kind of error."
+    assert change["after"] == (
+        "In that case it now fails with a different error. It returns early in a new case. It now also triggers audit record."
+    )
+    assert change["impact"] == "Anything that goes through post checkout."
     assert change["evidence"][0]["label"] == "app/billing.py:13"
     markdown = render_behavioral_changes_markdown(section)
-    assert "made_up" not in markdown and "Written by the configured model" not in markdown
-    assert build_behavioral_section(narrative=None, facts=[])["overview"] == "The diff shows no statement-level behavior change."
+    for code in ("made_up", "ValueError", "total", "`", "audit.record", "app/billing.py:13`"):
+        assert code not in markdown.split("**Evidence:**")[0], code
 
 
 def test_oauth_facts_carry_entry_points_and_contract_check():
