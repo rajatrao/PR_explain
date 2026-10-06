@@ -343,10 +343,40 @@ def test_plain_words_about_the_changed_function_are_on_topic():
     ]
     narrative = _one(
         "Session Expiration Handling",
-        "Previously, a session token identified only the user.",
-        "With this change, each token also records how long it stays valid.",
+        "Previously, a session identifier named only the user.",
+        "With this change, each session identifier also records how long it stays valid.",
     )
     assert screen_narrative(narrative, facts) is not None
+
+
+def test_areas_and_judgments_the_facts_do_not_show_are_dropped():
+    facts = [
+        BehaviorFunctionFact(
+            function="build_details",
+            file="backend/app/explanation/details.py",
+            public=True,
+            changes=[BehaviorChangeFact(id="b1", claim_id="c1", kind="return", before="return rows", after="return rows[:6]")],
+        )
+    ]
+    honest = _one("Details rows", "Previously, every changed row was listed.", "With this change, at most six rows are listed.")
+    reasons: list[str] = []
+    kept = screen_narrative(
+        BehavioralNarrative(
+            overview="These changes primarily affect user authentication and session handling.",
+            changes=honest.changes,
+        ),
+        facts,
+        reasons,
+    )
+    assert kept is not None and kept.overview == ""
+    assert "dropped the overview: it goes beyond the kept changes" in reasons
+    for text, expected in (
+        ("With this change, the updated validation ensures stronger security practices.", "judged the change"),
+        ("With this change, the session timeout adjustment cuts the rows listed.", "mentioned session"),
+    ):
+        reasons = []
+        assert screen_narrative(_one("Details rows", "Previously, every changed row was listed.", text), facts, reasons) is None
+        assert any(expected in reason for reason in reasons), (expected, reasons)
 
 
 def test_retry_recovers_a_narrative_that_was_dropped():
