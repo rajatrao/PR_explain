@@ -451,12 +451,13 @@ def _review_for_run(explanations: dict, run: AnalysisRun, repo: str, sha: str, p
     """The stored review (rules plus the screened model review), or the rule review for older runs."""
     from types import SimpleNamespace
 
-    from app.explanation.review_report import build_review
+    from app.explanation.review_report import build_review, finalize_review
 
     stored = _quick_field(explanations, "review")
     if stored:
         try:
-            return {**ReviewReport.model_validate(stored).model_dump(mode="json"), "source": "stored"}
+            report = finalize_review(ReviewReport.model_validate(stored))
+            return {**report.model_dump(mode="json"), "source": "stored"}
         except Exception:
             pass
     facts = SimpleNamespace(symbols=run.symbols, relationships=run.relationships_, claims=run.claims, evidences=run.evidences)

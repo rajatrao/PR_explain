@@ -759,9 +759,6 @@ function ReviewView({ run }: { run: RunDetail }) {
   const report = run.review;
   if (!report) return <p className="kicker">The review is not available for this run yet.</p>;
   const link = (location: string) => codeLink(location, run.revision.repository, run.revision.head_sha);
-  const tops = new Set(report.top_questions.map((item) => item.question));
-  const moreQuestions = report.questions.filter((item) => !tops.has(item.question));
-  const testGroups = groupBy(report.missing_tests, (item) => item.group);
   return (
     <div className="review">
       {report.source === "rules" ? (
@@ -793,19 +790,7 @@ function ReviewView({ run }: { run: RunDetail }) {
         ))}
       </ReviewSection>
 
-      <ReviewSection title="2. Reviewer questions" empty={moreQuestions.length === 0 && report.top_questions.length === 0}>
-        {moreQuestions.length > 0 ? (
-          <ul className="review-questions">
-            {moreQuestions.map((item, index) => (
-              <li key={`${index}-${item.question}`}>{item.question}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="review-empty">All questions are ranked in the top questions below.</p>
-        )}
-      </ReviewSection>
-
-      <ReviewSection title="3. Potential bugs and regressions" empty={report.bugs.length === 0}>
+      <ReviewSection title="2. Potential bugs and regressions" empty={report.bugs.length === 0}>
         {report.bugs.map((bug, index) => (
           <article className="review-card" key={`${index}-${bug.finding}`}>
             <header>
@@ -828,32 +813,7 @@ function ReviewView({ run }: { run: RunDetail }) {
         ))}
       </ReviewSection>
 
-      <ReviewSection title="4. Missing test scenarios" empty={report.missing_tests.length === 0}>
-        {[...testGroups.entries()].map(([group, tests]) => (
-          <div className="detail-group" key={group}>
-            <h3>{group}</h3>
-            <ul className="review-questions">
-              {tests.map((test, index) => (
-                <li key={`${index}-${test.scenario}`}>
-                  {test.scenario} <span className="kicker">— {test.verifies}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </ReviewSection>
-
-      <ReviewSection title="5. Things that look safe" empty={report.safe.length === 0}>
-        <ul className="review-questions">
-          {report.safe.map((item, index) => (
-            <li key={`${index}-${item.area}`}>
-              <strong>{item.area}</strong> — {item.why}
-            </li>
-          ))}
-        </ul>
-      </ReviewSection>
-
-      <ReviewSection title="6. Top review questions" empty={report.top_questions.length === 0}>
+      <ReviewSection title="3. Top review questions" empty={report.top_questions.length === 0}>
         <ol className="review-questions ranked">
           {report.top_questions.map((item, index) => (
             <li key={`${index}-${item.question}`}>
@@ -866,16 +826,6 @@ function ReviewView({ run }: { run: RunDetail }) {
           ))}
         </ol>
       </ReviewSection>
-
-      {report.undetermined.length > 0 ? (
-        <ReviewSection title="Could not determine">
-          <ul className="review-questions">
-            {report.undetermined.map((text, index) => (
-              <li key={`${index}-${text}`}>{text}</li>
-            ))}
-          </ul>
-        </ReviewSection>
-      ) : null}
 
       <section className={`review-panel risk risk-${report.overall_risk.toLowerCase()}`} aria-label="Overall review risk">
         <h2>
@@ -910,13 +860,4 @@ function codeLink(location: string, repo: string, sha: string): ReactNode {
 
 function joinNodes(nodes: ReactNode[]): ReactNode[] {
   return nodes.flatMap((node, index) => (index === 0 ? [node] : [", ", node]));
-}
-
-function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
-  const out = new Map<string, T[]>();
-  for (const item of items) {
-    const name = key(item);
-    out.set(name, [...(out.get(name) ?? []), item]);
-  }
-  return out;
 }

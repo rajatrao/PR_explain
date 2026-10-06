@@ -144,12 +144,12 @@ def test_details_sections_use_stored_facts_and_name_gaps():
     assert "### Overall review risk: Medium" in review
     assert "**Medium · createSession (src/session.ts)**" in review
     assert "Which test covers the new behavior of createSession?" in review
-    assert "Already passes ttlMs" in review
+    assert "Things that look safe" not in review
     assert "Suggested review areas" not in review
     assert "| Where | Why look |" not in review
     assert "### Trace" not in body
     assert "what test should reference" not in review.lower()
-    assert review.index("### 1. Reviewer attention areas") < review.index("### 6. Top review questions") < review.index("### Overall review risk")
+    assert review.index("### 1. Reviewer attention areas") < review.index("### 3. Top review questions") < review.index("### Overall review risk")
     lowered = body.lower()
     assert "one-hop" not in lowered
     assert "insecure" not in lowered
