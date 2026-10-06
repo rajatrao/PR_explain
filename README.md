@@ -7,6 +7,7 @@
  > **PR Explain is like `SQL EXPLAIN` for Pull Requests.**
 
  Instead of asking an AI model to blindly read a Pull Request and guess what happened, PR Explain first performs deterministic code analysis, builds a structured change graph, collects evidence, and determines potential impact. The AI model then turns those facts into a human-readable explanation.
+ 
 ---
 
 ## Snapshot
